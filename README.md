@@ -1,3 +1,6 @@
+# Implementation FGD method on LSSANet and MSANet
+# Model code is from below
+
 ## LSSANet
 
 This repository includes codes, models, and test results for our paper: "[_LSSANet: A Long Short Slice-Aware Network for 
