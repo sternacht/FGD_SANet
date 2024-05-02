@@ -2,20 +2,30 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
-
+import math
 
 
 class Self_Cailbration(nn.Module):
-    def __init__(self, inplanes, planes, stride, padding, dilation, groups, pooling_r, norm_layer,kernel_size=3):
+    def __init__(self, inplanes, planes, stride, padding, dilation, groups, pooling_r, norm_layer,Dynamic_ker_size = False):
         """
         inplanes: input channels
         planes: output channels
+        dilation: ??
+        groups: ??
         pooling_r: downsmapling rate before k2
+        norm_layer:??
         """
+        if pooling_r == 1:
+            kernel_size1 = 5
+        else :
+            kernel_size1 = int(7+math.log2(4/math.pow(pooling_r,2)))
+        if Dynamic_ker_size == False:
+            kernel_size1 = 3
+        kernel_size = 3
         super(Self_Cailbration, self).__init__()
         self.k2 = nn.Sequential(
             nn.AvgPool3d(kernel_size=pooling_r, stride=pooling_r),
-            nn.Conv3d(inplanes, planes, kernel_size, stride=1, padding=padding, dilation=dilation, groups=groups, bias=False),
+            nn.Conv3d(inplanes, planes, kernel_size1, stride=1, padding=padding, dilation=dilation, groups=groups, bias=False),
             norm_layer(planes),
         )
         self.k3 = nn.Sequential(
@@ -26,6 +36,7 @@ class Self_Cailbration(nn.Module):
             nn.Conv3d(inplanes, planes, kernel_size, stride=stride, padding=padding, dilation=dilation, groups=groups, bias=False),
             norm_layer(planes),
         )
+        
     def forward(self, x):
         identity = x
 
@@ -125,22 +136,22 @@ class Multi_SCConv3D(nn.Module):
         self.k1 = nn.Sequential(
                     nn.Conv3d(
                         group_width, group_width, kernel_size=3, stride=stride,
-                        padding=dilation, dilation=dilation,
+                        padding="same", dilation=dilation,
                         groups=cardinality, bias=False),
                     norm_layer(group_width),
                     )
 
         self.sc2 = Self_Cailbration(
             group_width, group_width, stride=stride,
-            padding=dilation, dilation=dilation,
+            padding="same", dilation=dilation,
             groups=cardinality, pooling_r=self.pooling_r, norm_layer=norm_layer, kernel_size=3)
         self.sc4 = Self_Cailbration(
             group_width, group_width, stride=stride,
-            padding=dilation, dilation=dilation,
+            padding="same", dilation=dilation,
             groups=cardinality, pooling_r=self.pooling_r, norm_layer=norm_layer,kernel_size=3)
         self.sc8 = Self_Cailbration(
             group_width, group_width, stride=stride,
-            padding=dilation, dilation=dilation,
+            padding="same", dilation=dilation,
             groups=cardinality, pooling_r=self.pooling_r, norm_layer=norm_layer,kernel_size=3)
         self.conv3 = nn.Conv3d(
             group_width*4 , planes, kernel_size=1, bias=False)

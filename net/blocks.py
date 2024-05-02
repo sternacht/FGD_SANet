@@ -18,7 +18,7 @@ def DeConv_3D(in_plane, out_plane, kernel_size=2, stride=2):
     # deconv = nn.Sequential(nn.ConvTranspose3d(in_plane, out_plane, kernel_size=kernel_size, stride=stride, bias=False),
     #                      nn.BatchNorm3d(out_plane, momentum=bn_momentum),
     #                      nn.ReLU(inplace = True))
-    deconv = nn.Upsample(scale_factor=2, mode='trilinear')
+    deconv = nn.Upsample(scale_factor=2, mode='nearest')
     return deconv
 
 class ResBlock3d(nn.Module):

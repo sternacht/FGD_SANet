@@ -37,7 +37,7 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
     target_weight = np.zeros((num_window, ), np.float32)
 
     # breakpoint()
-    num_truth_box = len(truth_box)
+    num_truth_box = len(np.where(truth_label == 1.)[0])
     if num_truth_box:
         # breakpoint()
         _, depth, height, width = input.size()
@@ -89,14 +89,20 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
         # let think about how this affect the model...
         # is this way really work, or it just confuse the model
 
-        # fg_index = np.where(label != 0)[0]
+        fg_index = np.where(label != 0)[0]
         # idx = random.sample(range(len(fg_index)), 1)
         # label[fg_index] = 0
         # label_weight[fg_index] = 0
         # fg_index = fg_index[idx]
         # label[fg_index] = 1
         # label_weight[fg_index] = 1
-
+        if len(fg_index) > 5:
+            idx = np.argpartition(overlap[fg_index,np.argmax(overlap[fg_index],1)],-5)[-5:]
+            label[fg_index] = 0
+            label_weight[fg_index] = 0
+            fg_index = fg_index[idx]
+            label[fg_index] = 1
+            label_weight[fg_index] = 1
 
         # Prepare regression terms for each positive anchor
         fg_index = np.where(label != 0)[0]
@@ -119,27 +125,27 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
             # This is very strange, but it works well in practice
             # It makes the use of hard negative example mining loss, not 
             # actually hard negative example mining.
-            label_weight[bg_index] = 0
-            idx = random.sample(range(len(bg_index)), min(num_neg, len(bg_index)))
-            bg_index = bg_index[idx]
+            # label_weight[bg_index] = 0
+            # idx = random.sample(range(len(bg_index)), min(num_neg, len(bg_index)))
+            # bg_index = bg_index[idx]
 
             # Calculate weight for class balance
-            num_fg = max(1, len(fg_index))
-            num_bg = max(1, len(bg_index))
-            label_weight[bg_index] = float(num_fg)/num_bg
+            # num_fg = max(1, len(fg_index))
+            # num_bg = max(1, len(bg_index))
+            # label_weight[bg_index] = 1
 
         target_weight[fg_index] = label_weight[fg_index]
     else:
         # if there is no ground truth box in this batch
         label_weight[...] = 1
 
-        if mode in ['train']:
-            bg_index = np.where((label_weight!=0) & (label==0))[0]
+        # if mode in ['train']:
+        #     bg_index = np.where((label_weight!=0) & (label==0))[0]
 
-            label_weight[bg_index] = 0
-            idx = random.sample(range(len(bg_index)), min(num_neg, len(bg_index)))
-            bg_index = bg_index[idx]
-            label_weight[bg_index] = 1.0 / len(bg_index)
+        #     label_weight[bg_index] = 0
+        #     idx = random.sample(range(len(bg_index)), min(num_neg, len(bg_index)))
+        #     bg_index = bg_index[idx]
+        #     label_weight[bg_index] = 1.0 / len(bg_index)
 
 
     label = torch.from_numpy(label).cuda()

@@ -7,14 +7,14 @@ import torch
 from torch.utils.data import Dataset
 from scipy.ndimage import zoom
 from scipy.ndimage.interpolation import rotate
-from utils.util import crop_with_lobe
+from utils.util import crop_with_lobe, pick_rand_neg
 #import SimpleITK as sitk
 # import nrrd
 import warnings
 import json
 import matplotlib.pyplot as plt
 
-class BboxReader(Dataset):
+class BboxReader_Neg(Dataset):
     def __init__(self, data_dir, set_name, augtype, cfg, mode='train'):
         self.mode = mode
         self.cfg = cfg
@@ -31,20 +31,20 @@ class BboxReader(Dataset):
         self.clip_min = cfg['clip_min']
         self.clip_max = cfg['clip_max']
         self.clip_half = (self.clip_max - self.clip_min)/2
-        labels = []
+        labels = {}
         self.eval_crop = []
         if set_name.endswith('.csv'):
-            self.filenames = np.genfromtxt(set_name, dtype=str)
+            ffilenames = np.genfromtxt(set_name, dtype=str)
         elif set_name.endswith('.npy'):
-            self.filenames = np.load(set_name)
+            ffilenames = np.load(set_name)
         elif set_name.endswith('.txt'):
             with open(self.set_name, "r") as f:
-                self.filenames = f.read().splitlines()[1:]
+                filenames = f.read().splitlines()[1:]
             #self.filenames = ['%05d' % int(i) for i in self.filenames]
         if self.mode != 'test':
-            self.filenames = [f for f in self.filenames if (f not in self.blacklist)]
-
-        for num, fns in enumerate(self.filenames):
+            filenames = [f for f in filenames if (f not in self.blacklist)]
+        self.filenames = []
+        for num, fns in enumerate(filenames):
             fn = fns.split(',')
             # with open(os.path.join(data_dir, '%s\\mask\\%s_nodule_count.json' % (fn,fn)), 'r') as f:
             fname = os.path.join(fn[0], 'mask', f'{fn[1]}_nodule_count.json')
@@ -72,26 +72,16 @@ class BboxReader(Dataset):
                     # print("No bboxes for %s" % fn)
                 l = np.array(l)
                 #l = fillter_box(l, [512, 512, 512])
-                labels.append(l)
+                labels[fns] = l
                 eval_crop_num = math.ceil(int(nd)/64)-1
                 for i in range(eval_crop_num):
                     self.eval_crop.append([num, i, eval_crop_num])
                 self.eval_crop
             if len(l) > 0:
                 self.val_filenames.append(fname)
+                self.filenames.append(fns)
+        self.bboxes = labels
         # breakpoint()
-
-        self.sample_bboxes = labels
-        if self.mode in ['train', 'val', 'eval']:
-            self.bboxes = []
-            for i, l in enumerate(labels):
-                if len(l) > 0:
-                    for t in l:
-                        # i-th image (dicom)
-                        self.bboxes.append([np.concatenate([[i], t])])
-            if self.bboxes == []:
-                print()
-            self.bboxes = np.concatenate(self.bboxes, axis=0).astype(np.float32)
         self.crop = Crop(cfg)
 
         # self.datas = {}
@@ -105,57 +95,45 @@ class BboxReader(Dataset):
                 is_random_crop = True
                 idx = idx % len(self.bboxes)
                 is_random_img = np.random.randint(2)
-            else:
-                is_random_crop = False
         else:
             is_random_crop = False
 
         if self.mode in ['train', 'val']:
-            if not is_random_img:
-                # if idx in self.datas.keys():
-                #     sample, bboxes = self.datas[idx]
-                # else:
-                bbox = self.bboxes[idx].copy()
-                filename = self.filenames[int(bbox[0])]
-                # imgs = self.load_img(filename)
-                imgs, lobe_info = self.load_img(filename)
-                bboxes = self.sample_bboxes[int(bbox[0])].copy()
-                bbox = bbox - [0, lobe_info[0], lobe_info[2], lobe_info[4], 0, 0, 0]
+            # isScale = self.augtype['scale'] and (self.mode=='train')
+            filename = self.filenames[idx]
+            imgs, lobe_info = self.load_img(filename)
+            imgs = pad2factor(imgs[0], factor=16, pad_value=0.67142)
+            imgs = np.expand_dims(imgs, 0)
+            bboxes = self.bboxes[filename].copy()
+            if len(bboxes):
                 bboxes = bboxes - [lobe_info[0], lobe_info[2], lobe_info[4], 0, 0, 0]
-                # bboxes = fillter_box(bboxes, imgs.shape[1:])
-                isScale = self.augtype['scale'] and (self.mode=='train')
-                sample, target, bboxes, coord = self.crop(imgs, bbox[1:], bboxes, isScale=False, isRand=False)
-                # if self.mode == 'train' and not is_random_crop:
-                sample, target, bboxes = augment(sample, target, bboxes, do_flip=self.augtype['flip'],
-                                                do_rotate=self.augtype['rotate'], do_swap=self.augtype['swap'])
-                # self.datas[idx] = [sample, bboxes]
             else:
-                randimid = np.random.randint(len(self.filenames))
-                filename = self.filenames[randimid]
-                # imgs = self.load_img(filename)
-                imgs, lobe_info = self.load_img(filename)
-                bboxes = self.sample_bboxes[randimid].copy()
-                bboxes = bboxes - [lobe_info[0], lobe_info[2], lobe_info[4], 0, 0, 0]
-                bboxes = fillter_box(bboxes, imgs.shape[1:])
-                isScale = self.augtype['scale'] and (self.mode=='train')
-                sample, target, bboxes, coord = self.crop(imgs, [], bboxes, isScale=False, isRand=True)
+                bboxes = np.zeros((1,6))
+            pos_bboxes = bboxes[np.random.choice(len(bboxes), min(len(bboxes),2), replace=False)]
+            neg_bboxes = [pick_rand_neg(bboxes, lobe_info) for i in range(max(1, 3-len(pos_bboxes)))]
+            samples = []
+            for pos in pos_bboxes:
+                sample, target, pos_bbox, coord = self.crop(imgs, pos, bboxes, isScale=False, isRand=False)
+                sample, target, pos_bbox = augment(sample, target, pos_bbox, do_flip=self.augtype['flip'],
+                                            do_rotate=self.augtype['rotate'], do_swap=self.augtype['swap'])
+                sample = sample.astype(np.float32)
+                pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
+                label = np.ones(len(pos_bbox), dtype=np.int32)
+                samples.append([torch.from_numpy(sample), pos_bbox, label])
+
+            for neg in neg_bboxes:
+                sample = imgs[:, neg[0]-64:neg[0]+64, neg[1]-64:neg[1]+64, neg[2]-64:neg[2]+64]
+                neg_bbox = np.array([np.zeros((6))])
+                label = np.zeros((1), dtype=np.int32)
+                samples.append([torch.from_numpy(sample), neg_bbox, label])
+
+            # self.datas[idx] = [sample, bboxes]
 
             if sample.shape[1] != self.cfg['crop_size'][0] or sample.shape[2] != \
                 self.cfg['crop_size'][1] or sample.shape[3] != self.cfg['crop_size'][2]:
                 print(filename, sample.shape, imgs.shape, lobe_info)
 
-            # Normalize
-            # sample = self.hu_normalize(sample)
-            # draw_all_bbox(sample,target,filename)
-            sample = sample.astype(np.float32)
-            bboxes = fillter_box(bboxes, self.cfg['crop_size'])
-            label = np.ones(len(bboxes), dtype=np.int32)
-            # print(bboxes.shape)
-            if len(bboxes.shape) != 1:
-                for i in range(3):
-                    bboxes[:, i+3] = bboxes[:, i+3] + self.cfg['bbox_border']
-
-            return [torch.from_numpy(sample), bboxes, label]
+            return samples
 
         if self.mode in ['eval']:
             filename = self.filenames[idx]
@@ -183,7 +161,7 @@ class BboxReader(Dataset):
 
     def __len__(self):
         if self.mode == 'train':
-            return int(len(self.bboxes) / (1-self.r_rand))
+            return int(len(self.filenames) / (1-self.r_rand))
         elif self.mode =='val':
             return len(self.bboxes)
         else:
@@ -229,7 +207,7 @@ class BboxReader(Dataset):
         return images.astype(np.float32)
 
 def pad2factor(image, factor=32, pad_value=170):
-    depth, height, width = image.shape
+    depth, height, width = image.shape[-3:]
     d = int(math.ceil(depth / float(factor))) * factor
     h = int(math.ceil(height / float(factor))) * factor
     w = int(math.ceil(width / float(factor))) * factor
@@ -252,7 +230,7 @@ def fillter_box(bboxes, size):
             res.append(box)
     return np.array(res)
 
-def augment(sample, target, bboxes, do_flip = True, do_rotate=True, do_swap = True):
+def augment(sample, target, bboxes, do_flip=True, do_rotate=True, do_swap=True):
     #                     angle1 = np.random.rand()*180
     if do_rotate and np.random.randint(0,2):
         validrot = False
@@ -281,8 +259,12 @@ def augment(sample, target, bboxes, do_flip = True, do_rotate=True, do_swap = Tr
             bboxes[:,:3] = bboxes[:,:3][:,axisorder]
 
     if do_flip and np.random.randint(0,2):
-        # flipid = np.array([np.random.randint(2),np.random.randint(2),np.random.randint(2)])*2-1
-        flipid = np.array([1,np.random.randint(2),np.random.randint(2)])*2-1
+        # at least flip in one of any dimensions
+        while True:
+            flipid = np.array([np.random.randint(2),np.random.randint(2),np.random.randint(2)])*2-1
+            if flipid.sum() < 3:
+                break
+        # flipid = np.array([1,np.random.randint(2),np.random.randint(2)])*2-1
         sample = np.ascontiguousarray(sample[:,::flipid[0],::flipid[1],::flipid[2]])
         # for ax in range(3):
         #     if flipid[ax]==-1:

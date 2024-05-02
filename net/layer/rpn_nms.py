@@ -93,6 +93,9 @@ def rpn_nms(cfg, mode, inputs, window, logits_flat, deltas_flat):
         proposals = torch.from_numpy(proposals).cuda()
     else:
         proposals = torch.rand([0, 8]).cuda()
+    if len(proposals) > 40:
+        _,idx = torch.topk(proposals[:,1], 40)
+        proposals = proposals[idx]
 
     return proposals
 

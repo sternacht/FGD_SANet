@@ -1,9 +1,11 @@
 from net.sanet import SANet
 from net.sanet_l3s2 import SANet_L3S2
 from net.MSANet import MsaNet
+from net.MSANet_reduce import MsaNet_R
 import time
-from dataset.collate import train_collate, test_collate, eval_collate
+from dataset.collate import train_collate, test_collate, eval_collate, train_with_neg_collate
 from dataset.bbox_reader import BboxReader
+from dataset.bbox_reader_neg import BboxReader_Neg
 from utils.util import Logger
 from single_config import train_config, datasets_info, net_config, config
 import pprint
@@ -15,6 +17,7 @@ import argparse
 import os
 import sys
 from termcolor import cprint
+from colorama import Fore
 from tqdm import tqdm
 import random
 import traceback
@@ -57,8 +60,8 @@ parser.add_argument('--data-dir', default=datasets_info['data_dir'], type=str, m
                     help='path to load data')
 parser.add_argument('--num-workers', default=train_config['num_workers'], type=int, metavar='N',
                     help='number of data loading workers')
-parser.add_argument('--FGD', default=net_config['FGD'], type=bool, metavar='N',
-                    help='training with FGD method')
+parser.add_argument('--batchsize-scale', '-lbs', default=train_config['batchsize_scale'], type=int,
+                    help="Train model with larger batch size, scaled by this param.")
 
 
 def main():
@@ -83,7 +86,7 @@ def main():
     data_dir = args.data_dir
     label_types = config['label_types']
     augtype = config['augtype']
-    FGD = args.FGD
+    batchsize_scale = args.batchsize_scale
     # scaler = GradScaler()
     train_dataset_list = []
     val_dataset_list = []
@@ -92,7 +95,7 @@ def main():
         label_type = label_types[i]
 
         if label_type == 'bbox':
-            dataset = BboxReader(data_dir, set_name, augtype, config, mode='train')
+            dataset = BboxReader_Neg(data_dir, set_name, augtype, config, mode='train')
 
         train_dataset_list.append(dataset)
 
@@ -108,7 +111,7 @@ def main():
         val_dataset_list.append(dataset)
 
     train_loader = DataLoader(ConcatDataset(train_dataset_list), batch_size=batch_size, shuffle=True,
-                              num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
+                              num_workers=args.num_workers, pin_memory=True, collate_fn=train_with_neg_collate, drop_last=True)
     val_loader = DataLoader(ConcatDataset(val_dataset_list), batch_size=batch_size, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate)
     
@@ -125,20 +128,17 @@ def main():
     else:
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
     # lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 45, 90, 100], gamma=0.1)
-    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=0.00001)
+    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=train_config['init_lr']/100)
     
-    def warmup_fn(epoch, warmup_epochs=10):
-        if epoch < warmup_epochs:
-            return epoch / warmup_epochs
-        else:
-            return 1
-
-    # 创建 warmup scheduler
-    warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, warmup_fn)
-
-    # 创建 cosine annealing scheduler
-    cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 100 - 10)
-
+    # def warmup_fn(epoch, warmup_epochs=10):
+    #     if epoch < warmup_epochs:
+    #         return epoch / warmup_epochs
+    #     else:
+    #         return 1
+    # warmup_scheduler = optim.lr_scheduler.LambdaLR(optimizer, warmup_fn)
+    # cosine_annealing_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 100 - 10)
+    # lr_schduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler,cosine_annealing_scheduler], milestones=[10])
+    
     scaler = GradScaler()
 
     start_epoch = 0
@@ -156,10 +156,12 @@ def main():
             net.load_state_dict(state, strict=True)
             if not ('model.ckpt' in initial_checkpoint):
                 optimizer.load_state_dict(checkpoint['optimizer'])
+            for i in range(start_epoch):
+                lr_schduler.step()
         except:
             print('Load something failed!')
             traceback.print_exc()
-
+            
     start_epoch = start_epoch + 1
 
     model_out_dir = os.path.join(out_dir, 'model')
@@ -187,12 +189,7 @@ def main():
 
     for i in range(start_epoch, epochs + 1):
         # learning rate schedule
-        if isinstance(optimizer, torch.optim.SGD):
-            lr = lr_schdule(i, init_lr=init_lr, total=epochs)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-        else:
-            lr = train_config['init_lr']
+        lr = train_config['init_lr']
 
         if i == epoch_rcnn:
             net.use_rcnn = True
@@ -201,14 +198,16 @@ def main():
                 param_group['lr'] = train_config['init_lr']
 
         print('[epoch %d/%d, lr %f, use_rcnn: %r]' % (i, epochs, optimizer.param_groups[0]['lr'], net.use_rcnn))
-        train(net, train_loader, optimizer, i, train_writer,scaler=scaler)
+        train(net, train_loader, optimizer, i, train_writer, scaler=scaler, batchsize_scale=batchsize_scale)
         validate(net, val_loader, i, val_writer)
         lr_schduler.step()
 
         state_dict = net.state_dict()
         for key in state_dict.keys():
-            state_dict[key] = state_dict[key].cpu()
+            if 'teacher' not in key:
+                state_dict[key] = state_dict[key].cpu()
 
+        # breakpoint()
         if i % epoch_save == 0:
             torch.save({
                 'epoch': i,
@@ -216,13 +215,19 @@ def main():
                 'state_dict': state_dict,
                 'optimizer' : optimizer.state_dict()},
                 os.path.join(model_out_dir, '%03d.ckpt' % i))
+        torch.save({
+                'epoch': i,
+                'out_dir': out_dir,
+                'state_dict': state_dict,
+                'optimizer' : optimizer.state_dict()},
+                os.path.join(model_out_dir, 'last.ckpt'))
 
     writer.close()
     train_writer.close()
     val_writer.close()
 
 
-def train(net, train_loader, optimizer, epoch, writer, scaler=None):
+def train(net, train_loader, optimizer, epoch, writer, scaler=None, batchsize_scale=1):
     net.set_mode('train')
     s = time.time()
     rpn_cls_loss, rpn_reg_loss = [], []
@@ -238,15 +243,10 @@ def train(net, train_loader, optimizer, epoch, writer, scaler=None):
     else:
         device = torch.device('cpu')
     with tqdm(total=len(train_loader)) as pbar:
+        optimizer.zero_grad()
         for j, (input, truth_box, truth_label) in enumerate(train_loader):
-            optimizer.zero_grad()
-
+            # breakpoint()
             truth_box = np.array(truth_box)
-
-            # print(truth_box)
-            # print('label', truth_label)
-            # print(input.shape)
-            # raise ValueError()
             truth_label = np.array(truth_label)
 
             with autocast():
@@ -258,33 +258,38 @@ def train(net, train_loader, optimizer, epoch, writer, scaler=None):
                     att_loss, fg_loss, bg_loss = fgd_loss
                 else:
                     loss, rpn_stat, rcnn_stat = net.loss()
-            
+
+            loss = loss/batchsize_scale
             # print(loss.data)
             if scaler:
             # mixed precision loss backward
                 scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
+                if (j+1)%batchsize_scale == 0:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+
             # normal loss backward
             else:
                 loss.backward()
-                optimizer.step()
+                if (j+1)%batchsize_scale == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
                     
-
-            pbar.set_description(f'loss:{loss.cpu().detach().numpy()}')
-            pbar.update(1)
-
-
+            total_loss.append(loss.cpu().data.item())
             rpn_cls_loss.append(net.rpn_cls_loss.cpu().data.item())
             rpn_reg_loss.append(net.rpn_reg_loss.cpu().data.item())
             rcnn_cls_loss.append(net.rcnn_cls_loss.cpu().data.item())
             rcnn_reg_loss.append(net.rcnn_reg_loss.cpu().data.item())
+            rpn_stats.append(np.asarray(torch.Tensor(rpn_stat).cpu(), np.float32))
             if net_config["FGD"]:
                 att_losses.append(att_loss.cpu().data.item())
                 fg_losses.append(fg_loss.cpu().data.item())
                 bg_losses.append(bg_loss.cpu().data.item())
-            total_loss.append(loss.cpu().data.item())
-            rpn_stats.append(np.asarray(torch.Tensor(rpn_stat).cpu(), np.float32))
+
+            pbar.set_description(f'loss:{np.array(total_loss).mean()}')
+            pbar.update(1)
+
             if net.use_rcnn:
                 rcnn_stats.append(rcnn_stat)
                 del rcnn_stat
@@ -304,21 +309,16 @@ def train(net, train_loader, optimizer, epoch, writer, scaler=None):
     rpn_stats = np.asarray(rpn_stats, np.float32)
     
     print('Train Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time() - s, np.average(total_loss)))
-    cprint('rpn_cls %f, rpn_reg %f, rcnn_cls %f, rcnn_reg %f' % \
-        (np.average(rpn_cls_loss),  np.average(rpn_reg_loss),
-         np.average(rcnn_cls_loss), np.average(rcnn_reg_loss)), 'light_red')
-    cprint('rpn_stats: recall(tpr) %f, tnr %f, total pos %d, total neg %d, reg %.4f, %.4f, %.4f, %.4f, %.4f, %.4f' % (
-        100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1]),
-        100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3]),
-        np.sum(rpn_stats[:, 1]),
-        np.sum(rpn_stats[:, 3]),
-        np.mean(rpn_stats[:, 4]),
-        np.mean(rpn_stats[:, 5]),
-        np.mean(rpn_stats[:, 6]),
-        np.mean(rpn_stats[:, 7]),
-        np.mean(rpn_stats[:, 8]),
-        np.mean(rpn_stats[:, 9])), 'light_magenta')
-
+    if config['FGD']:
+        print(f'{Fore.RED}rpn_cls {np.average(rpn_cls_loss)}, rpn_reg {np.average(rpn_reg_loss)}, fg {np.average(fg_losses)}'
+              f', bg {np.average(bg_losses)}, att {np.average(att_losses)}{Fore.RESET}')
+    else:
+        print(f'{Fore.RED}rpn_cls {np.average(rpn_cls_loss)}, rpn_reg {np.average(rpn_reg_loss)}{Fore.RESET}')
+    print(f'{Fore.MAGENTA}rpn_stats: recall(tpr) {100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])}, '
+          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {np.sum(rpn_stats[:, 1])}, '
+          f'total neg {np.sum(rpn_stats[:, 3])}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
+          f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '
+          f'{np.mean(rpn_stats[:, 8]):.4f}, {np.mean(rpn_stats[:, 9]):.4f}{Fore.RESET}')
     # Write to tensorboard
     writer.add_scalar('tpr', (100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])), epoch)
     writer.add_scalar('tnr', (100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])), epoch)
@@ -382,14 +382,16 @@ def validate(net, val_loader, epoch, writer):
                 # with autocast():
                 net(input, truth_box, truth_label)
                 loss, rpn_stat, rcnn_stat = net.loss()
-                pbar.set_description(f'loss:{loss.cpu().detach().numpy()}')
-                pbar.update(1)
+            
+            total_loss.append(loss.cpu().data.item())
             rpn_cls_loss.append(net.rpn_cls_loss.cpu().data.item())
             rpn_reg_loss.append(net.rpn_reg_loss.cpu().data.item())
             rcnn_cls_loss.append(net.rcnn_cls_loss.cpu().data.item())
             rcnn_reg_loss.append(net.rcnn_reg_loss.cpu().data.item())
 
-            total_loss.append(loss.cpu().data.item())
+            pbar.set_description(f'loss:{np.array(total_loss).mean()}')
+            pbar.update(1)
+
             rpn_stats.append(np.asarray(torch.Tensor(rpn_stat).cpu(), np.float32))
             if net.use_rcnn:
                 rcnn_stats.append(rcnn_stat)
@@ -397,22 +399,12 @@ def validate(net, val_loader, epoch, writer):
 
     rpn_stats = np.asarray(rpn_stats, np.float32)
     print('Val Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time()-s, np.average(total_loss)))
-    cprint('rpn_cls %f, rpn_reg %f, rcnn_cls %f, rcnn_reg %f' % \
-        (np.average(rpn_cls_loss), np.average(rpn_reg_loss),
-            np.average(rcnn_cls_loss), np.average(rcnn_reg_loss)
-            ),color='light_green')
-    cprint('rpn_stats: recall(tpr) %f, tnr %f, total pos %d, total neg %d, reg %.4f, %.4f, %.4f, %.4f, %.4f, %.4f' % (
-        100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1]),
-        # 100.0 * np.sum(rpn_stats[:, 0]) / (np.sum(rpn_stats[:, 0])+(np.sum(rpn_stats[:, 3])-np.sum(rpn_stats[:, 2]))),
-        100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3]),
-        np.sum(rpn_stats[:, 1]),
-        np.sum(rpn_stats[:, 3]),
-        np.mean(rpn_stats[:, 4]),
-        np.mean(rpn_stats[:, 5]),
-        np.mean(rpn_stats[:, 6]),
-        np.mean(rpn_stats[:, 7]),
-        np.mean(rpn_stats[:, 8]),
-        np.mean(rpn_stats[:, 9])), color='light_yellow')
+    print(f'{Fore.GREEN}rpn_cls {np.average(rpn_cls_loss)}, rpn_reg {np.average(rpn_reg_loss)}{Fore.RESET}')
+    print(f'{Fore.CYAN}rpn_stats: recall(tpr) {100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])}, '
+          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {np.sum(rpn_stats[:, 1])}, '
+          f'total neg {np.sum(rpn_stats[:, 3])}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
+          f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '
+          f'{np.mean(rpn_stats[:, 8]):.4f}, {np.mean(rpn_stats[:, 9]):.4f}{Fore.RESET}')
     
     # Write to tensorboard
     writer.add_scalar('tpr', (100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])), epoch)
@@ -443,7 +435,7 @@ def validate(net, val_loader, epoch, writer):
             np.mean(rcnn_stats[:, 2]),
             np.mean(rcnn_stats[:, 3]),
             np.mean(rcnn_stats[:, 4]),
-            np.mean(rcnn_stats[:, 5])),color='light_blue')
+            np.mean(rcnn_stats[:, 5])),color='blue')
         # print_confusion_matrix(confusion_matrix)
         writer.add_scalar('rcnn_reg_z', np.mean(rcnn_stats[:, 0]), epoch)
         writer.add_scalar('rcnn_reg_y', np.mean(rcnn_stats[:, 1]), epoch)

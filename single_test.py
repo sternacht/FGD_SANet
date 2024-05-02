@@ -18,6 +18,7 @@ from scipy.ndimage import center_of_mass
 from net.sanet import SANet
 from net.sanet_l3s2 import SANet_L3S2
 from net.MSANet import MsaNet
+from net.MSANet_reduce import MsaNet_R
 from dataset.collate import train_collate, test_collate, eval_collate
 from dataset.bbox_reader import BboxReader
 from single_config import datasets_info, train_config, test_config, net_config, config
@@ -26,6 +27,7 @@ from utils.util import onehot2multi_mask, normalize, pad2factor, load_dicom_imag
     npy2submission
 import pandas as pd
 from evaluationScript.uni_noduleCADEvaluation import noduleCADEvaluation
+
 
 plt.rcParams['figure.figsize'] = (24, 16)
 plt.switch_backend('agg')
@@ -66,18 +68,17 @@ def main():
         augtype = args.augtype
         # num_workers = config['num_workers']
         num_workers = 1
-
-        net = getattr(this_module, net)(config, mode='eval')
-        net = net.cuda()
         # print(net)
 
+        if 'FGD' in initial_checkpoint:
+            config['FGD'] = True
+        net = getattr(this_module, net)(config, mode='eval')
+        net = net.cuda()
         if initial_checkpoint:
             print('[Loading model from %s]' % initial_checkpoint)
             checkpoint = torch.load(initial_checkpoint)
             # out_dir = checkpoint['out_dir']
             epoch = checkpoint['epoch']
-
-            net.load_state_dict(checkpoint['state_dict'], strict=True)
         else:
             print('No model weight file specified')
             return
@@ -90,7 +91,7 @@ def main():
                               num_workers=num_workers, pin_memory=False, collate_fn=train_collate)
         # breakpoint()
         print('out_dir', out_dir)
-        save_dir = os.path.join(out_dir, 'res', str(epoch))
+        save_dir = os.path.join(out_dir, 'res', str(epoch)+'_')
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
             
@@ -100,10 +101,17 @@ def main():
             os.makedirs(os.path.join(save_dir, 'FROC'))
             create = True
 
+        if create:
+            try:
+                net.load_state_dict(checkpoint['state_dict'], strict=True)
+            except RuntimeError:
+                config['FGD'] = False
+                net.load_state_dict(checkpoint['state_dict'], strict=True)
+
+            
         eval(net, test_loader, annotation_dir, data_dir, save_dir, create_data=create)
     else:
         logging.error('Mode %s is not supported' % (args.mode))
-
 
 def eval(net, dataset, annotation_dir, data_dir, save_dir=None, create_data=True):
     net.set_mode('eval')
@@ -117,39 +125,22 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, create_data=True
         rpn = []
         detection = []
         ensemble = []
-        for i, (input, truth_bboxes, truth_labels) in tqdm(enumerate(dataset), total=len(dataset), desc='eval'):
+        # for i, (input, truth_bboxes, truth_labels) in tqdm(enumerate(dataset), total=len(dataset), desc='eval'):
+        for i, (input, truth_bboxes, truth_labels, lobe_info) in tqdm(enumerate(dataset), total=len(dataset), desc='eval'):
             try:
                 input = input.cuda()
                 truth_bboxes = np.array(truth_bboxes)
                 truth_labels = np.array(truth_labels)
-                # print('[%d] Predicting' % (i))
         
                 with torch.no_grad():
-                    # input = input.cuda().unsqueeze(0)
-                    net.forward(input, truth_bboxes, truth_labels)
-                # breakpoint()
+                    # net.forward(input, truth_bboxes, truth_labels)
+                    net.forward(input, truth_bboxes, truth_labels, lobe_info=lobe_info)
                 rpns = net.rpn_proposals.cpu().numpy()
-                # detections = net.detections.cpu().numpy()
-                # ensembles = net.ensemble_proposals.cpu().numpy()
-        
-                # print('rpn', rpns.shape)
-                # print('detection', detections.shape)
-                # print('ensemble', ensembles.shape)
-                
+                # breakpoint()
                 if len(rpns):
                     rpns = rpns[:, 1:]
                     # rpn.extend(rpns)
                     np.save(os.path.join(save_dir, f'{i}_rpns.npy'), rpns)
-        
-                # if len(detections):
-                #     detections = detections[:, 1:-1]
-                #     # detection.extend(detections)
-                #     np.save(os.path.join(save_dir, f'{i}_rcnns.npy'), detections)
-        
-                # if len(ensembles):
-                #     ensembles = ensembles[:, 1:]
-                #     # ensemble.extend(ensembles)
-                #     np.save(os.path.join(save_dir, f'{i}_ensembles.npy'), ensembles)
         
                 # Clear gpu memory
                 del input, truth_bboxes, truth_labels
@@ -162,9 +153,6 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, create_data=True
         
                 print()
                 return
-        # np.save(os.path.join(save_dir, 'rpns.npy'), rpn)
-        # np.save(os.path.join(save_dir, 'rcnns.npy'), detection)
-        # np.save(os.path.join(save_dir, 'ensembles.npy'), ensemble)
     else:
         print(f'Prediction data has been created')
     print(f'Prediction data creation is done')

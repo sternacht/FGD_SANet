@@ -131,7 +131,7 @@ class BboxReader(Dataset):
         if self.mode in ['eval']:
             filename = self.filenames[idx]
             imgs = self.load_img(filename)
-            image = pad2factor(imgs[0], pad_value=0.1666)
+            image = pad2factor(imgs[0], pad_value=0.67142)
             image = np.expand_dims(image, 0)
 
             bboxes = self.sample_bboxes[idx]

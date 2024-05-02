@@ -1,12 +1,13 @@
 import sys
 import warnings
 from net.layer import *
+from net.MSANet import MsaNet
 from single_config import net_config as config
 import copy
 from torch.nn.parallel.data_parallel import data_parallel
 import time
 import torch.nn.functional as F
-from utils.util import center_box_to_coord_box, ext2factor, clip_boxes, crop_size, crop_with_lobe
+from utils.util import center_box_to_coord_box, ext2factor, clip_boxes, crop_size
 from torch.nn.parallel import data_parallel
 import random
 import math
@@ -35,23 +36,12 @@ class FeatureNet(nn.Module):
             block(72, 96),
             block(96, 96))
 
-        self.forw4 = nn.Sequential(
-            block(96, 120),
-            block(120, 120))
-
         # skip connection in U-net
         self.back2 = nn.Sequential(
-            # 注意back2、back3順序
-            # 128 + 72 = 200
-            block(200, 128),
+            # 96 + 72 = 168
+            block(168, 128),
             block(128, 128))
 
-        # skip connection in U-net
-        self.back3 = nn.Sequential(
-            # 注意back2、back3順序
-            #120+96=216
-            block(216, 128),
-            block(128, 128))
 
         self.maxpool1 = nn.MaxPool3d(kernel_size=2, stride=2,
                                      return_indices=True)
@@ -59,25 +49,16 @@ class FeatureNet(nn.Module):
                                      return_indices=True)
         self.maxpool3 = nn.MaxPool3d(kernel_size=2, stride=2,
                                      return_indices=True)
-        self.maxpool4 = nn.MaxPool3d(kernel_size=2, stride=2,
-                                     return_indices=True)
-
-        # upsampling in U-net
-        self.path1 = nn.Sequential(
-            nn.ConvTranspose3d(120, 120, kernel_size=2, stride=2),
-            nn.BatchNorm3d(120),
-            nn.ReLU(inplace=True))
 
         # upsampling in U-net
         self.path2 = nn.Sequential(
-            nn.ConvTranspose3d(128, 128, kernel_size=2, stride=2),
-            nn.BatchNorm3d(128),
+            nn.ConvTranspose3d(96, 96, kernel_size=2, stride=2),
+            nn.BatchNorm3d(96),
             nn.ReLU(inplace=True))
 
         # multi-scale aggregation
         self.MSA1 = MultiScalAggregation3fs([48,72,96])
-        self.MSA2 = MultiScalAggregation3fs([72,96,120])
-        self.MSA3 = MultiScalAggregation2fs([96,120])
+        self.MSA2 = MultiScalAggregation2fs([72,96])
 
         # self.conv = nn.Sequential(
         #     nn.Conv3d(128,64,kernel_size=3, padding='same'),
@@ -96,20 +77,13 @@ class FeatureNet(nn.Module):
 
         fs3_pool, _ = self.maxpool3(fs3)
         fs4 = self.forw3(fs3_pool)#96
-
-        fs4_pool, _ = self.maxpool4(fs4)
-        fs5 = self.forw4(fs4_pool)#120
         #out4 = self.drop(out4)
         
-        rev3 = self.MSA3([fs4,fs5])       # output = 6 * 6 * 6 * 120
-        rev2 = self.MSA2([fs3,fs4,fs5])  # 12* 12* 12* 96
+        rev2 = self.MSA2([fs3,fs4])  # 12* 12* 12* 96
         rev1 = self.MSA1([fs2,fs3,fs4])  # 24* 24* 24* 72
 
-
-        up3 = self.path1(rev3)             # 12*12*12*120
-        comb3 = self.back3(torch.cat((up3, rev2), 1))#120+96 ->128
-        up2 = self.path2(comb3)            # 24*24*24*128
-        comb2 = self.back2(torch.cat((up2, rev1), 1))#128+72->128
+        up2 = self.path2(rev2)            # 24*24*24*96
+        comb2 = self.back2(torch.cat((up2, rev1), 1))   # 96+72->128
         return [x, fs2, comb2], fs3
 
 class RpnHead(nn.Module):
@@ -199,9 +173,9 @@ class CropRoi(nn.Module):
 
         return crops
 
-class MsaNet(nn.Module):
+class MsaNet_R(nn.Module):
     def __init__(self, cfg, mode='train',hes='OHEM'):
-        super(MsaNet, self).__init__()
+        super(MsaNet_R, self).__init__()
 
         self.cfg = cfg
         self.mode = mode
@@ -245,13 +219,18 @@ class MsaNet(nn.Module):
                 self.attention_loss, self.fg_loss, self.bg_loss = FGD_loss(t_fs, fs, truth_boxes)
 
         elif self.mode == 'eval':
-            
+            # breakpoint()
             if lobe_info is not None:
                 # crop the input with lobe and test whole cropped image
-                Ds, De, Hs, He, Ws, We = lobe_info
-                crop_input = inputs[:,:, Ds:De, Hs-He, Ws-We]
+                Ds, De, Hs, He, Ws, We = lobe_info[0]
+                crop_inputs = inputs[:,:, Ds:De, Hs:He, Ws:We]
+                # crop_inputs = inputs
+                B,C,D,H,W = crop_inputs.shape
+                # breakpoint()
+                self.rpn_windows = make_rpn_windows([1, 128, D//4, H//4, W//4], self.cfg)
+                self.rpn_window = self.rpn_windows + [Ds, Hs, Ws, 0, 0, 0]
                 with torch.no_grad():
-                    features, _ = data_parallel(self.feature_net,(crop_input))
+                    features, _ = data_parallel(self.feature_net,(crop_inputs))
                     fs = features[-1]
                     fs_shape = fs.shape
                     self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
@@ -259,19 +238,17 @@ class MsaNet(nn.Module):
                 self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1)
                 self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6)
 
-                self.rpn_windows = make_rpn_windows([1, 128, (De-Ds)//4, (He-Hs)//4, (We-Ws)//4], self.cfg)
-                self.rpn_window = self.rpn_windows + [Ds, Hs, Ws, 0, 0, 0]
-                
             else:
                 # turn input image into small block and test each of them
                 B,C,D,H,W = inputs.shape
                 self.rpn_logits_flat = torch.tensor([]).cuda()
                 self.rpn_deltas_flat = torch.tensor([]).cuda()
                 self.rpn_window = np.empty((0,6))
+                last_crop = 0
                 # B, C, D, H, W = 1, 128, 32, 128, 128
                 rpn_windows = make_rpn_windows([1, 128, 32, 128, 128], self.cfg)
-                last_crop = 0
-                for i in range(math.ceil((D)/64)-1):
+
+                for i in range(math.ceil(D/64)-1):
                     hw_block = 1 
                     block_size = 512
                     hw_stride = 512-(block_size*hw_block - 512)/(hw_block-1) if hw_block > 1 else 0
@@ -287,12 +264,12 @@ class MsaNet(nn.Module):
                         crop_w = crop_size[hw_stride][w_idx]
                         # breakpoint()
                         if i*64+128 >= D:
-                            crop_input = inputs[:,:,-128:, h_idx*hw_stride:h_idx*hw_stride+512, w_idx*hw_stride:w_idx*hw_stride+512]
+                            crop_input = inputs[:,:,-128:, h_idx*hw_stride:h_idx*hw_stride+block_size, w_idx*hw_stride:w_idx*hw_stride+block_size]
                             overlap_slice = (D-(i*64))//4
                             last_crop = 1
                             start_slice = D-128
                         else:
-                            crop_input = inputs[:,:,i*64: i*64+128, h_idx*hw_stride:h_idx*hw_stride+512, w_idx*hw_stride:w_idx*hw_stride+512]
+                            crop_input = inputs[:,:,i*64: i*64+128, h_idx*hw_stride:h_idx*hw_stride+block_size, w_idx*hw_stride:w_idx*hw_stride+block_size]
                             overlap_slice = 16
                             start_slice = i*64
                         with torch.no_grad():
@@ -328,11 +305,11 @@ class MsaNet(nn.Module):
 
 
         self.rpn_proposals = []
+        # breakpoint()
         if self.use_rcnn or self.mode in ['eval', 'test']:
             self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                   self.rpn_logits_flat, self.rpn_deltas_flat)
-
-        # breakpoint()
+            
         if self.mode in ['train', 'valid']:
             # self.rpn_proposals = torch.zeros((0, 8)).cuda()
             self.rpn_labels, self.rpn_label_assigns, self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights = \
@@ -494,4 +471,4 @@ if __name__ == '__main__':
         input_tensor = input_tensor.to('cuda')
 
     torchsummary.summary(net, (1, 128, 128, 128), device='cuda')
-    # print("summary")
+    print("summary")

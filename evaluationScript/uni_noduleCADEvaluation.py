@@ -7,14 +7,13 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter,LogFormatter,StrMethodFormatter,FixedFormatter
 import sklearn.metrics as skl_metrics
 import numpy as np
-
+from utils.util import nodules_IoU
 from evaluationScript.NoduleFinding import NoduleFinding
 
 from evaluationScript.tools import csvTools
 # matplotlib.rc('xtick', labelsize=18)
 # matplotlib.rc('ytick', labelsize=18)
-font = {'family' : 'Times New Roman',
-        'size'   : 17}
+font = {'size'   : 17}
 
 matplotlib.rc('font', **font)
 # Evaluation settings
@@ -151,7 +150,7 @@ def computeFROC(FROCGTList, FROCProbList, totalNumberOfImages, excludeList):
     else:
       fps = fpr * (totalNumberOfCandidates - numberOfDetectedLesions) / totalNumberOfImages
     sens = (tpr * numberOfDetectedLesions) / totalNumberOfLesions
-    # breakpoint()
+
     return fps, sens, thresholds
 
 def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemName, maxNumberOfCADMarks=-1,
@@ -227,6 +226,9 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
     candFPs = 0
     candFNs = 0
     candTNs = 0
+    TP_ = [0,0,0,0]
+    FP_ = [0,0,0,0]
+    FN_ = [0,0,0,0]
     totalNumberOfCands = 0
     totalNumberOfNodules = 0
     doubleCandidatesIgnored = 0
@@ -281,12 +283,14 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
             found = False
             noduleMatches = []
             for key, candidate in candidates.items():
+                # breakpoint()
                 # print(key)
                 x2 = float(candidate.coordX)
                 y2 = float(candidate.coordY)
                 z2 = float(candidate.coordZ)
                 dist = math.pow(x - x2, 2.) + math.pow(y - y2, 2.) + math.pow(z - z2, 2.)
-                if dist < radiusSquared:
+                # if dist < radiusSquared:
+                if nodules_IoU(candidate, noduleAnnot) >= 0.1:
                     if (noduleAnnot.state == "Included"):
                         found = True
                         noduleMatches.append(candidate)
@@ -294,12 +298,13 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
                             print("This is strange: CAD mark %s detected two nodules! Check for overlapping nodule annotations, SeriesUID: %s, nodule Annot ID: %s" % (str(candidate.id), seriesuid, str(noduleAnnot.id)))
                         else:
                             del candidates2[key]
-                    elif (noduleAnnot.state == "Excluded"): # an excluded nodule
-                        if bOtherNodulesAsIrrelevant: #    delete marks on excluded nodules so they don't count as false positives
-                            if key in candidates2.keys():
-                                irrelevantCandidates += 1
-                                ignoredCADMarksList.append("%s,%s,%s,%s,%s,%s,%.9f" % (seriesuid, -1, candidate.coordX, candidate.coordY, candidate.coordZ, str(candidate.id), float(candidate.CADprobability)))
-                                del candidates2[key]
+                    # no Excluded nodule state now
+                    # elif (noduleAnnot.state == "Excluded"): # an excluded nodule
+                    #     if bOtherNodulesAsIrrelevant: #    delete marks on excluded nodules so they don't count as false positives
+                    #         if key in candidates2.keys():
+                    #             irrelevantCandidates += 1
+                    #             ignoredCADMarksList.append("%s,%s,%s,%s,%s,%s,%.9f" % (seriesuid, -1, candidate.coordX, candidate.coordY, candidate.coordZ, str(candidate.id), float(candidate.CADprobability)))
+                    #             del candidates2[key]
             if len(noduleMatches) > 1: # double detection
                 doubleCandidatesIgnored += (len(noduleMatches) - 1)
             if noduleAnnot.state == "Included":
@@ -320,24 +325,49 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
                     excludeList.append(False)
                     FROCtoNoduleMap.append("%s,%s,%s,%s,%s,%.9f,%s,%.9f" % (seriesuid, noduleAnnot.id, noduleAnnot.coordX, noduleAnnot.coordY, noduleAnnot.coordZ, float(noduleAnnot.diameter_mm), str(candidate.id), float(candidate.CADprobability)))
                     candTPs += 1
+                    if float(noduleAnnot.diameter_mm) <= 4.:
+                        TP_[0] += 1
+                    elif float(noduleAnnot.diameter_mm) <= 6:
+                        TP_[1] += 1
+                    elif float(noduleAnnot.diameter_mm) <= 8:
+                        TP_[2] += 1
+                    else:
+                        TP_[3] += 1
                 else:
-                    candFNs += 1
                     # append a positive sample with the lowest probability, such that this is added in the FROC analysis
                     FROCGTList.append(1.0)
                     FROCProbList.append(minProbValue)
                     FPDivisorList.append(seriesuid)
                     excludeList.append(True)
                     FROCtoNoduleMap.append("%s,%s,%s,%s,%s,%.9f,%s,%s" % (seriesuid, noduleAnnot.id, noduleAnnot.coordX, noduleAnnot.coordY, noduleAnnot.coordZ, float(noduleAnnot.diameter_mm), int(-1), "NA"))
-                    nodNoCandFile.write("%s, %s, %s, %s, %.3f, %s\n" % (seriesuid, noduleAnnot.coordX, noduleAnnot.coordY, noduleAnnot.coordZ, float(noduleAnnot.diameter_mm), str(-1)))
+                    nodNoCandFile.write("%s, %s, %s, %s, %s, %.3f, %s\n" % (seriesuid, noduleAnnot.id, noduleAnnot.coordX, noduleAnnot.coordY, noduleAnnot.coordZ, float(noduleAnnot.diameter_mm), str(-1)))
+                    candFNs += 1
+                    if float(noduleAnnot.diameter_mm) <= 4.:
+                        FN_[0] += 1
+                    elif float(noduleAnnot.diameter_mm) <= 6:
+                        FN_[1] += 1
+                    elif float(noduleAnnot.diameter_mm) <= 8:
+                        FN_[2] += 1
+                    else:
+                        FN_[3] += 1
 
         # add all false positives to the vectors
         for key, candidate3 in candidates2.items():
-            candFPs += 1
             FROCGTList.append(0.0)
             FROCProbList.append(float(candidate3.CADprobability))
             FPDivisorList.append(seriesuid)
             excludeList.append(False)
             FROCtoNoduleMap.append("%s,%s,%s,%s,%s,%s,%.9f" % (seriesuid, -1, candidate3.coordX, candidate3.coordY, candidate3.coordZ, str(candidate3.id), float(candidate3.CADprobability)))
+            candFPs += 1
+            if float(candidate3.diameter_mm) <= 4.:
+                FP_[0] += 1
+            elif float(candidate3.diameter_mm) <= 6:
+                FP_[1] += 1
+            elif float(candidate3.diameter_mm) <= 8:
+                FP_[2] += 1
+            else:
+                FP_[3] += 1
+            
 
     if not (len(FROCGTList) == len(FROCProbList) and len(FROCGTList) == len(FPDivisorList) and len(FROCGTList) == len(FROCtoNoduleMap) and len(FROCGTList) == len(excludeList)):
         nodOutputfile.write("Length of FROC vectors not the same, this should never happen! Aborting..\n")
@@ -357,6 +387,11 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
     else:
         nodOutputfile.write("    Sensitivity: %.9f\n" % (float(candTPs) / float(totalNumberOfNodules)))
     nodOutputfile.write("    Average number of candidates per scan: %.9f\n" % (float(totalNumberOfCands) / float(len(seriesUIDs))))
+
+    nodOutputfile.write("\n")
+    nodOutputfile.write(f"TP: begian {TP_[0]}, prob begian {TP_[1]}, prob suspicious {TP_[2]}, suspicious {TP_[3]}\n")
+    nodOutputfile.write(f"FP: begian {FP_[0]}, prob begian {FP_[1]}, prob suspicious {FP_[2]}, suspicious {FP_[3]}\n")
+    nodOutputfile.write(f"FN: begian {FN_[0]}, prob begian {FN_[1]}, prob suspicious {FN_[2]}, suspicious {FN_[3]}\n")
 
     # compute FROC
     fps, sens, thresholds = computeFROC(FROCGTList,FROCProbList,len(seriesUIDs),excludeList)
@@ -425,9 +460,11 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
         plt.savefig(os.path.join(outputDir, "froc_%s.png" % CADSystemName), bbox_inches=0, dpi=300)
 
     def find_nearest(array,value):
-        idx = np.where((fps - value) == (fps - value)[(fps - value) >= 0].min())[0][-1]
+        try:
+            idx = np.where((fps - value) == (fps - value)[(fps - value) >= 0].min())[0][-1]
+        except:
+            idx = -1
         return idx
-    # breakpoint()
     thres = [0.125,0.25,0.5,1,2,4,8]
     sen = []
     out = f'FROC at points: {thres}\n'
@@ -436,7 +473,7 @@ def evaluateCAD(seriesUIDs, results_filename, outputDir, allNodules, CADSystemNa
         sen.append(sens[find_nearest(fps, th)])
     out += f'=============================================\naverage FROC: {np.mean(sen)}'
     print(out)
-
+    print(TP_, FN_, FP_)
     return (fps, sens, thresholds, fps_bs_itp, sens_bs_mean, sens_bs_lb, sens_bs_up), out
     
 def getCanNodule(annotation, header, state = ""):
@@ -479,7 +516,6 @@ def getNodule(annotation, data_dir, seriesuid, header, state=""):
         # nodule.coordX = str(float(annotation[header.index(coordX_label)])*spacing[2] - lungbox_origin[2])
         # nodule.coordY = str(float(annotation[header.index(coordY_label)])*spacing[1] - lungbox_origin[1])
         # nodule.coordZ = str(float(annotation[header.index(coordZ_label)])*spacing[0] - lungbox_origin[0])
-
     if diameter_mm_label in header:
         nodule.diameter_mm = annotation[header.index(diameter_mm_label)]
         nodule.w_mm = nodule.diameter_mm
@@ -514,13 +550,16 @@ def getNodule(annotation, data_dir, seriesuid, header, state=""):
     return nodule
     
 def collectNoduleAnnotations(annotations, data_dir, seriesUIDs):
+    '''
+        return allNodules:dict, all gt nodule coord and shape.
+    '''
     allNodules = {}
     noduleCount = 0
     noduleCountTotal = 0
     
-    for seriesuid in seriesUIDs:
+    for seriesuid in seriesUIDs[1:]:
         # print('adding nodule annotations: ' + seriesuid)
-
+        
         nodules = []
         numberOfIncludedNodules = 0
         
@@ -532,8 +571,8 @@ def collectNoduleAnnotations(annotations, data_dir, seriesUIDs):
             if seriesuid == nodule_seriesuid:
                 nodule = getNodule(annotation, data_dir, seriesuid, header, state="Included")
                 if float(nodule.coordX) > 0 and float(nodule.coordX) < 512 and \
-                        float(nodule.coordY) > 0 and float(nodule.coordY) < 512 and \
-                        float(nodule.coordZ) > 0 and float(nodule.coordZ) < 512:
+                   float(nodule.coordY) > 0 and float(nodule.coordY) < 512 and \
+                   float(nodule.coordZ) > 0 and float(nodule.coordZ) < 512:
                     nodules.append(nodule)
                     numberOfIncludedNodules += 1
         
@@ -552,22 +591,24 @@ def collectNoduleAnnotations(annotations, data_dir, seriesUIDs):
     
     print('Total number of included nodule annotations: ' + str(noduleCount))
     print('Total number of nodule annotations: ' + str(noduleCountTotal))
+    # breakpoint()
     return allNodules
     
     
 def collect(annotations_filename, data_dir, seriesuids_filename):
     annotations    = csvTools.readCSV(annotations_filename)
     seriesUIDs_csv = csvTools.readCSV(seriesuids_filename)
+    
     seriesUIDs = []
     for seriesUID in seriesUIDs_csv:
         fdir, fname = seriesUID
         fpath = os.path.join('%s\\mask\\%s_nodule_count.json' % (fdir,fname))
         seriesUIDs.append(fpath)
+
     allNodules = collectNoduleAnnotations(annotations, data_dir, seriesUIDs)
     
     return (allNodules, seriesUIDs)
-    
-    
+
 def noduleCADEvaluation(annotations_filename,data_dir,seriesuids_filename,results_filename,outputDir):
     '''
     function to load annotations and evaluate a CAD algorithm

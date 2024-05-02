@@ -11,6 +11,7 @@ import shutil
 import operator
 import warnings
 import numpy as np
+from utils.pybox import torch_overlap
 # import matplotlib as mpl
 # mpl.use('TkAgg')
 # import matplotlib.pyplot as plt
@@ -30,6 +31,34 @@ try:
 except ImportError:
     # Python2
     from StringIO import StringIO
+
+crop_size = {96:np.array([[0,28],[4,28],[4,28],[4,28],[4,32]]),
+             64:np.array([[0,24],[8,24],[8,24],[8,24],[8,24],[8,24],[8,32]]),
+             0:np.array([[0,128]])}
+
+def nodules_IoU(nodule1, nodule2):
+    x1, y1, z1 = float(nodule1.coordX), float(nodule1.coordY), float(nodule1.coordZ)
+    w, h, d = float(nodule1.w_mm), float(nodule1.h_mm), float(nodule1.d_mm)      # nodule1 bbox shape
+    x2, y2, z2 = float(nodule2.coordX), float(nodule2.coordY), float(nodule2.coordZ)
+    aw, ah, ad = float(nodule2.w_mm), float(nodule2.h_mm), float(nodule2.d_mm)  # nodule2 bbox shape
+
+    x_overlap = min(x1+w/2, x2+aw/2) - max(x1-w/2, x2-aw/2) if (max(x1+w/2, x2+aw/2)-min(x1-w/2, x2-aw/2)) < w+aw else 0
+    y_overlap = min(y1+h/2, y2+ah/2) - max(y1-h/2, y2-ah/2) if (max(y1+h/2, y2+ah/2)-min(y1-h/2, y2-ah/2)) < h+ah else 0
+    z_overlap = min(z1+d/2, z2+ad/2) - max(z1-d/2, z2-ad/2) if (max(z1+d/2, z2+ad/2)-min(z1-d/2, z2-ad/2)) < d+ad else 0
+    v = x_overlap * y_overlap*z_overlap
+    return v / (w*h*d+aw*ah*ad-v)
+
+def IoU(cord1, shape, cord2, shape2):
+    x1, y1, z1 = cord1
+    w, h, d = shape      # nodule bbox shape
+    x2, y2, z2 = cord2
+    aw, ah, ad = shape2  # anchor shape
+
+    x_overlap = min(x1+w/2, x2+aw/2) - max(x1-w/2, x2-aw/2) if (max(x1+w/2, x2+aw/2)-min(x1-w/2, x2-aw/2)) < w+aw else 0
+    y_overlap = min(y1+h/2, y2+ah/2) - max(y1-h/2, y2-ah/2) if (max(y1+h/2, y2+ah/2)-min(y1-h/2, y2-ah/2)) < h+ah else 0
+    z_overlap = min(z1+d/2, z2+ad/2) - max(z1-d/2, z2-ad/2) if (max(z1+d/2, z2+ad/2)-min(z1-d/2, z2-ad/2)) < d+ad else 0
+    v = x_overlap * y_overlap*z_overlap
+    return v / (w*h*d+aw*ah*ad-v)
 
 
 class Logger(object):
@@ -530,3 +559,47 @@ def truncate_HU_uint8(img):
     new_img[new_img > 1] = 1
     new_img = (new_img * 255).astype('uint8')
     return new_img
+
+def crop_with_lobe(z:str, yx:str, align=16):
+    '''
+        Return lobe coordinate 
+        Input: (z, yx): string contain start and end slice(pixel)
+               align: make the lobe align to a specific number, start will 
+                      be floor and end will be ceil
+        Output: 6 int 
+    '''
+    zlobe = z.replace('\n','').split(',')
+    Ds, De = [int(z_) for z_ in zlobe]
+    yxlobe = yx.replace('\n','').split(',')
+    Hs, He, Ws, We = [int(yx_) for yx_ in yxlobe]
+    
+    # align to 16 or 32
+    Ds = (Ds//align)*align
+    De = ((De+align-1)//align)*align
+    Hs = (Hs//align)*align
+    He = ((He+align-1)//align)*align
+    Ws = (Ws//align)*align
+    We = ((We+align-1)//align)*align
+
+    return (Ds, De, Hs, He, Ws, We)
+
+def pick_rand_neg(gt, lobes):
+    '''
+        pick random point as center of negative sample, cropped patch contain no positive anchors
+        Input: gt: GT nodule coordinate and shape, (cz, cy, cx, d, h, w)
+               lobes: lobe crop information, (Ds, De, Hs, He, Ws, We)
+        Output: coordinate, (z, y, x)
+    '''
+    while True:
+        overlap_nodule = False
+        rz = np.random.randint(64, lobes[1]-lobes[0]-64)
+        ry = np.random.randint(64, lobes[3]-lobes[2]-64)
+        rx = np.random.randint(64, lobes[5]-lobes[4]-64)
+        overlaps = torch_overlap(gt[:,-6:], np.array([rz, ry, rx, 128, 128, 128]))
+        for overlap in overlaps:
+            if overlap[0] > 0.0:
+                overlap_nodule = True
+                break
+        if not overlap_nodule:
+            break
+    return (rz, ry, rx)
