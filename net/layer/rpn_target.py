@@ -28,7 +28,9 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
     target_weight: weight for each regression term, by default it should all be ones
     """
 
-    num_neg = cfg['num_neg']
+    # It's weird to use "num_neg" to limit nuber of negative samples.
+    # Though it may work in some case. It isn't used here.
+    # num_neg = cfg['num_neg']
     num_window = len(window)
     label = np.zeros((num_window, ), np.float32)
     label_assign = np.zeros((num_window, ), np.int32) - 1
@@ -63,20 +65,21 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
         label[fg_index] = 1
         label_weight[fg_index] = 1
         label_assign[...] = argmax_overlap
-
         # In case no anchor box that overlaps with the ground truth box meets the threshold, 
         # for each ground truth box, we include anchor box that has the highest IoU with it, 
         # include multiple maxs if there exists more than one anchor box
-        argmax_overlap = np.argmax(overlap,0)   # 每個 GT 對應 anchors 中 IoU 最大的 -> size=[num_of_GT,]
-        max_overlap = overlap[argmax_overlap,np.arange(num_truth_box)]  # 根據 argmax_overlap 找到該值
-        argmax_overlap, la = np.where(overlap == max_overlap)    # 所有符合最大 IoU 值的 anchor
+        # argmax_overlap = np.argmax(overlap,0)   # 每個 GT 對應 anchors 中 IoU 最大的 -> size=[num_of_GT,]
+        # max_overlap = overlap[argmax_overlap,np.arange(num_truth_box)]  # 根據 argmax_overlap 找到該值
+        # argmax_overlap, la = np.where(overlap == max_overlap)    # 所有符合最大 IoU 值的 anchor
 
-        fg_index = argmax_overlap
+        # fg_index = argmax_overlap
 
-        label[fg_index] = 1
-        label_weight[fg_index] = 1
-        label_assign[fg_index] = la
+        # label[fg_index] = 1
+        # label_weight[fg_index] = 1
+        # label_assign[fg_index] = la
 
+        ignore_index = np.where(((max_overlap >= cfg['rpn_train_bg_thresh_high'])&(max_overlap < cfg['rpn_train_fg_thresh_low'])))[0]
+        label_weight[ignore_index] = 0
         # assign bg index label to 0 here for some reason.
         # 避免在前一步強制給每個 GT 一個 anchor時，給到太小的IoU
         label[bg_index] = 0

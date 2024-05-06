@@ -6,3 +6,5 @@ test,ipynb
 MsaNet_results
 MsaNet_R_results
 SANet_L3S2_results
+Results_record.xlsx
+.gitignore

@@ -6,6 +6,7 @@ import time
 from dataset.collate import train_collate, test_collate, eval_collate, train_with_neg_collate
 from dataset.bbox_reader import BboxReader
 from dataset.bbox_reader_neg import BboxReader_Neg
+from dataset.bbox_reader_neg_nodulebased import BboxReader_NegNB
 from utils.util import Logger
 from single_config import train_config, datasets_info, net_config, config
 import pprint
@@ -84,35 +85,16 @@ def main():
     val_set_list = args.val_set_list
     lr_schdule = train_config['lr_schedule']
     data_dir = args.data_dir
-    label_types = config['label_types']
+    label_type = config['label_types']
     augtype = config['augtype']
     batchsize_scale = args.batchsize_scale
-    # scaler = GradScaler()
-    train_dataset_list = []
-    val_dataset_list = []
-    for i in range(len(train_set_list)):
-        set_name = train_set_list[i]
-        label_type = label_types[i]
+    if label_type == 'bbox':
+        train_dataset = BboxReader_NegNB(data_dir, train_set_list, augtype, config, mode='train')
+        val_dataset = BboxReader(data_dir, val_set_list, augtype, config, mode='val')
 
-        if label_type == 'bbox':
-            dataset = BboxReader_Neg(data_dir, set_name, augtype, config, mode='train')
-
-        train_dataset_list.append(dataset)
-
-    for i in range(len(val_set_list)):
-        set_name = val_set_list[i]
-        label_type = label_types[i]
-
-        if label_type == 'bbox':
-            dataset = BboxReader(data_dir, set_name, augtype, config, mode='val')
-        # else:
-        #     dataset = LUNA16BboxReader(data_dir, set_name, augtype, config, mode='val')
-
-        val_dataset_list.append(dataset)
-
-    train_loader = DataLoader(ConcatDataset(train_dataset_list), batch_size=batch_size, shuffle=True,
-                              num_workers=args.num_workers, pin_memory=True, collate_fn=train_with_neg_collate, drop_last=True)
-    val_loader = DataLoader(ConcatDataset(val_dataset_list), batch_size=batch_size, shuffle=False,
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate)
     
     
@@ -199,7 +181,6 @@ def main():
 
         print('[epoch %d/%d, lr %f, use_rcnn: %r]' % (i, epochs, optimizer.param_groups[0]['lr'], net.use_rcnn))
         train(net, train_loader, optimizer, i, train_writer, scaler=scaler, batchsize_scale=batchsize_scale)
-        validate(net, val_loader, i, val_writer)
         lr_schduler.step()
 
         state_dict = net.state_dict()
@@ -208,7 +189,8 @@ def main():
                 state_dict[key] = state_dict[key].cpu()
 
         # breakpoint()
-        if i % epoch_save == 0:
+        if i % epoch_save == 0 and i>50:
+            validate(net, val_loader, i, val_writer)
             torch.save({
                 'epoch': i,
                 'out_dir': out_dir,
@@ -287,7 +269,7 @@ def train(net, train_loader, optimizer, epoch, writer, scaler=None, batchsize_sc
                 fg_losses.append(fg_loss.cpu().data.item())
                 bg_losses.append(bg_loss.cpu().data.item())
 
-            pbar.set_description(f'loss:{np.array(total_loss).mean()}')
+            pbar.set_description(f'loss:{np.array(total_loss).mean():.4f}')
             pbar.update(1)
 
             if net.use_rcnn:
@@ -314,14 +296,20 @@ def train(net, train_loader, optimizer, epoch, writer, scaler=None, batchsize_sc
               f', bg {np.average(bg_losses)}, att {np.average(att_losses)}{Fore.RESET}')
     else:
         print(f'{Fore.RED}rpn_cls {np.average(rpn_cls_loss)}, rpn_reg {np.average(rpn_reg_loss)}{Fore.RESET}')
-    print(f'{Fore.MAGENTA}rpn_stats: recall(tpr) {100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])}, '
-          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {np.sum(rpn_stats[:, 1])}, '
-          f'total neg {np.sum(rpn_stats[:, 3])}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
+
+    TP = np.sum(rpn_stats[:, 0])
+    recall = 100.0 * TP / np.sum(rpn_stats[:, 1])  #TP/(TP+FN)->TP/total pos
+    precision = 100.0 * TP / (TP + np.sum(rpn_stats[:, 3])-np.sum(rpn_stats[:, 2])) #TP/(TP+FP)
+    F1_score = 2*recall*precision/(recall+precision)
+    print(f'{Fore.MAGENTA}rpn_stats: recall(tpr) {recall}, '
+          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {int(np.sum(rpn_stats[:, 1]))}, '
+          f'total neg {int(np.sum(rpn_stats[:, 3]))}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
           f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '
           f'{np.mean(rpn_stats[:, 8]):.4f}, {np.mean(rpn_stats[:, 9]):.4f}{Fore.RESET}')
     # Write to tensorboard
-    writer.add_scalar('tpr', (100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])), epoch)
+    writer.add_scalar('tpr', recall, epoch)
     writer.add_scalar('tnr', (100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])), epoch)
+    # writer.add_scalar('F1_score',F1_socre, epoch)
 
     writer.add_scalar('loss', np.average(total_loss), epoch)
     writer.add_scalar('rpn_cls', np.average(rpn_cls_loss), epoch)
@@ -389,7 +377,7 @@ def validate(net, val_loader, epoch, writer):
             rcnn_cls_loss.append(net.rcnn_cls_loss.cpu().data.item())
             rcnn_reg_loss.append(net.rcnn_reg_loss.cpu().data.item())
 
-            pbar.set_description(f'loss:{np.array(total_loss).mean()}')
+            pbar.set_description(f'loss:{np.array(total_loss).mean():.4f}')
             pbar.update(1)
 
             rpn_stats.append(np.asarray(torch.Tensor(rpn_stat).cpu(), np.float32))
@@ -401,15 +389,25 @@ def validate(net, val_loader, epoch, writer):
     print('Val Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time()-s, np.average(total_loss)))
     print(f'{Fore.GREEN}rpn_cls {np.average(rpn_cls_loss)}, rpn_reg {np.average(rpn_reg_loss)}{Fore.RESET}')
     print(f'{Fore.CYAN}rpn_stats: recall(tpr) {100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])}, '
-          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {np.sum(rpn_stats[:, 1])}, '
-          f'total neg {np.sum(rpn_stats[:, 3])}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
+          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {int(np.sum(rpn_stats[:, 1]))}, '
+          f'total neg {int(np.sum(rpn_stats[:, 3]))}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
           f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '
           f'{np.mean(rpn_stats[:, 8]):.4f}, {np.mean(rpn_stats[:, 9]):.4f}{Fore.RESET}')
     
+    TP = np.sum(rpn_stats[:, 0])
+    recall = 100.0 * TP / np.sum(rpn_stats[:, 1])  #TP/(TP+FN)->TP/total pos
+    precision = 100.0 * TP / (TP + np.sum(rpn_stats[:, 3])-np.sum(rpn_stats[:, 2])) #TP/(TP+FP)
+    F1_score = 2*recall*precision/(recall+precision)
+    print(f'{Fore.MAGENTA}rpn_stats: recall(tpr) {recall}, '
+          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {int(np.sum(rpn_stats[:, 1]))}, '
+          f'total neg {int(np.sum(rpn_stats[:, 3]))}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
+          f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '
+          f'{np.mean(rpn_stats[:, 8]):.4f}, {np.mean(rpn_stats[:, 9]):.4f}{Fore.RESET}')
     # Write to tensorboard
-    writer.add_scalar('tpr', (100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])), epoch)
-    # writer.add_scalar('precision', (100.0 * np.sum(rpn_stats[:, 0]) / (np.sum(rpn_stats[:, 0])+np.sum(rpn_stats[:, 2]))), epoch)
+    writer.add_scalar('tpr', recall, epoch)
     writer.add_scalar('tnr', (100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])), epoch)
+    writer.add_scalar('F1_score', F1_score, epoch)
+    writer.add_scalar('precision', precision, epoch)
     
     writer.add_scalar('loss', np.average(total_loss), epoch)
     writer.add_scalar('rpn_cls', np.average(rpn_cls_loss), epoch)

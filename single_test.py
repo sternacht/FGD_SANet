@@ -64,7 +64,7 @@ def main():
         test_name = args.test_name
         data_dir = args.data_dir
         annotation_dir = args.annotation_dir
-        label_types = config['label_types'][0]
+        label_types = config['label_types']
         augtype = args.augtype
         # num_workers = config['num_workers']
         num_workers = 1
@@ -91,7 +91,7 @@ def main():
                               num_workers=num_workers, pin_memory=False, collate_fn=train_collate)
         # breakpoint()
         print('out_dir', out_dir)
-        save_dir = os.path.join(out_dir, 'res', str(epoch)+'_')
+        save_dir = os.path.join(out_dir, 'res', str(epoch)+'')
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
             
@@ -196,9 +196,9 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, create_data=True
     rpn_submission_path = os.path.join(eval_dir, 'submission_rpn.csv')
     # rcnn_submission_path = os.path.join(eval_dir, 'submission_rcnn.csv')
     # ensemble_submission_path = os.path.join(eval_dir, 'submission_ensemble.csv')
-
-    df = pd.DataFrame(rpn_res, columns=col_names)
-    df.to_csv(rpn_submission_path, index=False)
+    if not os.path.exists(rpn_submission_path):
+        df = pd.DataFrame(rpn_res, columns=col_names)
+        df.to_csv(rpn_submission_path, index=False)
 
     # df = pd.DataFrame(rcnn_res, columns=col_names)
     # df.to_csv(rcnn_submission_path, index=False)

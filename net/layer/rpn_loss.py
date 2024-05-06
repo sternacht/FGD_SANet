@@ -83,7 +83,7 @@ def weighted_focal_loss_with_logits_OHEM(logits, labels, weights, fg_threshold=0
     neg_idcs = (labels[:, 0] == 0) & (weights[:, 0] != 0)    # y=0
     neg_probs = probs[neg_idcs, 0]                           # P,  y=0
     if num_hard > 0:
-        neg_probs = fOHEM(neg_probs, num_hard * len(pos_probs)) # OHEM pick larger P(y=0)
+        neg_probs = fOHEM(neg_probs, num_hard * max(len(pos_probs), 1)) # OHEM pick larger P(y=0)
         # neg_probs = fOHEM(neg_probs, num_hard * max(len(pos_probs),1))
 
     pos_logprobs = torch.log(pos_probs)                      # log(Pt), y=1
@@ -160,7 +160,7 @@ def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, cfg
         else:
             num_hard = 10000000
         rpn_cls_loss, pos_correct, pos_total, neg_correct, neg_total = \
-            weighted_focal_loss_with_logits_OHEM(logits, labels, label_weights, gamma=1, alpha=0.4,
+            weighted_focal_loss_with_logits_OHEM(logits, labels, label_weights, gamma=1, alpha=0.7,
                                                  fg_threshold=cfg['rpn_fg_threshold'], num_hard=num_hard)
     else:
         if mode in ['train']:
@@ -192,7 +192,8 @@ def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, cfg
         rpn_reg_loss = rpn_reg_loss/6
 
     else:
-        rpn_reg_loss = torch.tensor((0.)).cuda()
+        reg_losses = torch.tensor((0.,0.,0.,0.,0.,0.)).cuda()
+        rpn_reg_loss = reg_losses.mean()
 
     return rpn_cls_loss, rpn_reg_loss, [pos_correct, pos_total, neg_correct, neg_total,
                                         reg_losses[0], reg_losses[1], reg_losses[2],

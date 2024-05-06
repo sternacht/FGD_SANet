@@ -32,6 +32,7 @@ class BboxReader_Neg(Dataset):
         self.clip_max = cfg['clip_max']
         self.clip_half = (self.clip_max - self.clip_min)/2
         labels = {}
+        weight = {}
         self.eval_crop = []
         if set_name.endswith('.csv'):
             ffilenames = np.genfromtxt(set_name, dtype=str)
@@ -47,11 +48,13 @@ class BboxReader_Neg(Dataset):
         for num, fns in enumerate(filenames):
             fn = fns.split(',')
             # with open(os.path.join(data_dir, '%s\\mask\\%s_nodule_count.json' % (fn,fn)), 'r') as f:
-            fname = os.path.join(fn[0], 'mask', f'{fn[1]}_nodule_count.json')
-            f_noduleinfo = os.path.join(fn[0], 'npy', 'series_metadata.txt')
-            with open(f_noduleinfo, 'r') as f:
+            with open(os.path.join(fn[0], 'npy', 'series_metadata.txt'), 'r') as f:
                 nodule_shape_str = f.read().splitlines()[4]
                 nh,nw,nd = nodule_shape_str.replace('\n','').split(',')
+            with open(os.path.join(fn[0], 'npy', 'lobe_info.txt'), 'r') as f:
+                lobe_info = f.readlines()[-2:]
+            Ds, De, Hs, He, Ws, We = crop_with_lobe(*lobe_info, align=16)
+            fname = os.path.join(fn[0], 'mask', f'{fn[1]}_nodule_count.json')
             with open(fname, 'r') as f:
                 annota= json.load(f)
                 bboxes = annota['bboxes']
@@ -67,12 +70,16 @@ class BboxReader_Neg(Dataset):
                         h = (bottom_right[0] - top_left[0]) + 1
                         w = (bottom_right[1] - top_left[1]) + 1
                         l.append([z, y, x, d, h, w])
+                    l = np.array(l)
                 else:
+                    # ignore those dicom with no GT nodule
                     pass
                     # print("No bboxes for %s" % fn)
-                l = np.array(l)
                 #l = fillter_box(l, [512, 512, 512])
+                # labels[fns] = l
+                # l = l - [Ds, Hs, Ws, 0, 0, 0]
                 labels[fns] = l
+                weight[fns] = np.array([1/len(l) for i in range(len(l))])
                 eval_crop_num = math.ceil(int(nd)/64)-1
                 for i in range(eval_crop_num):
                     self.eval_crop.append([num, i, eval_crop_num])
@@ -81,7 +88,7 @@ class BboxReader_Neg(Dataset):
                 self.val_filenames.append(fname)
                 self.filenames.append(fns)
         self.bboxes = labels
-        # breakpoint()
+        self.weights = weight
         self.crop = Crop(cfg)
 
         # self.datas = {}
@@ -105,11 +112,17 @@ class BboxReader_Neg(Dataset):
             imgs = pad2factor(imgs[0], factor=16, pad_value=0.67142)
             imgs = np.expand_dims(imgs, 0)
             bboxes = self.bboxes[filename].copy()
+            p = self.weights[filename]
             if len(bboxes):
                 bboxes = bboxes - [lobe_info[0], lobe_info[2], lobe_info[4], 0, 0, 0]
+            #     pass
             else:
                 bboxes = np.zeros((1,6))
-            pos_bboxes = bboxes[np.random.choice(len(bboxes), min(len(bboxes),2), replace=False)]
+            # pos_idcs = np.random.choice(len(bboxes), min(len(bboxes),2), replace=False)
+            pos_idcs = np.random.choice(len(bboxes), min(len(bboxes),2), replace=False, p=p)
+            p[pos_idcs] *= 0.5
+            self.weights[filename] = p / p.sum()
+            pos_bboxes = bboxes[pos_idcs]
             neg_bboxes = [pick_rand_neg(bboxes, lobe_info) for i in range(max(1, 3-len(pos_bboxes)))]
             samples = []
             for pos in pos_bboxes:
@@ -120,7 +133,28 @@ class BboxReader_Neg(Dataset):
                 pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
                 label = np.ones(len(pos_bbox), dtype=np.int32)
                 samples.append([torch.from_numpy(sample), pos_bbox, label])
+            # samples = []
+            # if len(bboxes) == 1:
+            #     for i in range(2):
+            #         sample, target, pos_bbox, coord = self.crop(imgs, pos, bboxes, isScale=False, isRand=False)
+            #         sample, target, pos_bbox = augment(sample, target, pos_bbox, do_flip=self.augtype['flip'],
+            #                                     do_rotate=self.augtype['rotate'], do_swap=self.augtype['swap'])
+            #         sample = sample.astype(np.float32)
+            #         pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
+            #         label = np.ones(len(pos_bbox), dtype=np.int32)
+            #         samples.append([torch.from_numpy(sample), pos_bbox, label])
+            # else:
+            #     pos_bboxes = bboxes[np.random.choice(len(bboxes), min(len(bboxes),2), replace=False)]
+            #     for pos in pos_bboxes:
+            #         sample, target, pos_bbox, coord = self.crop(imgs, pos, bboxes, isScale=False, isRand=False)
+            #         sample, target, pos_bbox = augment(sample, target, pos_bbox, do_flip=self.augtype['flip'],
+            #                                     do_rotate=self.augtype['rotate'], do_swap=self.augtype['swap'])
+            #         sample = sample.astype(np.float32)
+            #         pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
+            #         label = np.ones(len(pos_bbox), dtype=np.int32)
+            #         samples.append([torch.from_numpy(sample), pos_bbox, label])
 
+            # neg_bboxes = [pick_rand_neg(bboxes, lobe_info)]
             for neg in neg_bboxes:
                 sample = imgs[:, neg[0]-64:neg[0]+64, neg[1]-64:neg[1]+64, neg[2]-64:neg[2]+64]
                 neg_bbox = np.array([np.zeros((6))])
@@ -194,7 +228,7 @@ class BboxReader_Neg(Dataset):
             img = img[:, Hs:He, Ws:We, Ds:De]
 
         img = np.clip(img, self.clip_min, self.clip_max)
-        img = img.astype(np.float32)
+        img = img.astype(np.float16)
         img = img.transpose(0, 3, 1, 2) # (1, y, x, z) -> (1, z, y, x)
         images = img - self.clip_min    # 0 ~ max
         images = (images - self.clip_half) / self.clip_half # -1 ~ 1
@@ -230,54 +264,76 @@ def fillter_box(bboxes, size):
             res.append(box)
     return np.array(res)
 
-def augment(sample, target, bboxes, do_flip=True, do_rotate=True, do_swap=True):
+def img_rotate(sample, target, bboxes):
     #                     angle1 = np.random.rand()*180
-    if do_rotate and np.random.randint(0,2):
-        validrot = False
-        counter = 0
-        while not validrot:
-            newtarget = np.copy(target)
-            angle1 = np.random.rand()*180
-            size = np.array(sample.shape[2:4]).astype('float')
-            rotmat = np.array([[np.cos(angle1/180*np.pi),-np.sin(angle1/180*np.pi)],[np.sin(angle1/180*np.pi),np.cos(angle1/180*np.pi)]])
-            newtarget[1:3] = np.dot(rotmat,target[1:3]-size/2)+size/2
-            if np.all(newtarget[:3]>target[3]) and np.all(newtarget[:3]< np.array(sample.shape[1:4])-newtarget[3]):
-                validrot = True
-                target = newtarget
-                sample = rotate(sample,angle1,axes=(2,3),reshape=False)
-                for box in bboxes:
-                    box[1:3] = np.dot(rotmat,box[1:3]-size/2)+size/2
-            else:
-                counter += 1
-                if counter ==3:
-                    break
-    if do_swap and np.random.randint(0,2):
-        if sample.shape[1]==sample.shape[2] and sample.shape[1]==sample.shape[3]:
-            axisorder = np.random.permutation(3)
-            sample = np.transpose(sample,np.concatenate([[0],axisorder+1]))
-            target[:3] = target[:3][axisorder]
-            bboxes[:,:3] = bboxes[:,:3][:,axisorder]
+    validrot = False
+    counter = 0
+    while not validrot:
+        newtarget = np.copy(target)
+        angle1 = np.random.rand()*180
+        size = np.array(sample.shape[2:4]).astype('float')
+        rotmat = np.array([[np.cos(angle1/180*np.pi),-np.sin(angle1/180*np.pi)],[np.sin(angle1/180*np.pi),np.cos(angle1/180*np.pi)]])
+        newtarget[1:3] = np.dot(rotmat,target[1:3]-size/2)+size/2
+        if np.all(newtarget[:3]>target[3]) and np.all(newtarget[:3]< np.array(sample.shape[1:4])-newtarget[3]):
+            validrot = True
+            target = newtarget
+            sample = rotate(sample,angle1,axes=(2,3),reshape=False)
+            for box in bboxes:
+                box[1:3] = np.dot(rotmat,box[1:3]-size/2)+size/2
+        else:
+            counter += 1
+            if counter ==3:
+                break
+    return sample, target, bboxes
 
-    if do_flip and np.random.randint(0,2):
-        # at least flip in one of any dimensions
+def img_swap(sample, target, bboxes):
+    if sample.shape[1]==sample.shape[2] and sample.shape[1]==sample.shape[3]:
+        # at least swap on two of any dimension
+        while True:
+            axisorder = np.random.permutation(3)
+            if not np.all(axisorder, np.array([0,1,2])):
+                break
+        sample = np.transpose(sample,np.concatenate([[0],axisorder+1]))
+        target[:3] = target[:3][axisorder]
+        bboxes[:,:3] = bboxes[:,:3][:,axisorder]
+    return sample, target, bboxes
+
+def img_flip(sample, target, bboxes, flipid=None):
+    # at least flip in one of any dimensions
+    if isinstance(flipid, list) or isinstance(flipid, np.ndarray):
+        if len(flipid) != 3:
+            warnings.warn("invalid flipid len or shape")
+    else:
         while True:
             flipid = np.array([np.random.randint(2),np.random.randint(2),np.random.randint(2)])*2-1
             if flipid.sum() < 3:
                 break
-        # flipid = np.array([1,np.random.randint(2),np.random.randint(2)])*2-1
-        sample = np.ascontiguousarray(sample[:,::flipid[0],::flipid[1],::flipid[2]])
-        # for ax in range(3):
-        #     if flipid[ax]==-1:
-        #         target[ax] = np.array(sample.shape[ax+1])-target[ax]
-        #         bboxes[:,ax]= np.array(sample.shape[ax+1])-bboxes[:,ax]
-        for ax in range(3):
-            if flipid[ax] == -1:
-                target[ax] = np.array(sample.shape[ax + 1]) - target[ax]
-                if len(bboxes.shape) == 1:
-                    print()
-                bboxes[:, ax] = np.array(sample.shape[ax + 1]) - bboxes[:, ax]
-                # target[ax + 3] = np.array(sample.shape[ax + 1]) - target[ax + 3]
-                # bboxes[:, ax + 3] = np.array(sample.shape[ax + 1]) - bboxes[:, ax + 3]
+    # flipid = np.array([1,np.random.randint(2),np.random.randint(2)])*2-1
+    sample = np.ascontiguousarray(sample[:,::flipid[0],::flipid[1],::flipid[2]])
+    # for ax in range(3):
+    #     if flipid[ax]==-1:
+    #         target[ax] = np.array(sample.shape[ax+1])-target[ax]
+    #         bboxes[:,ax]= np.array(sample.shape[ax+1])-bboxes[:,ax]
+    for ax in range(3):
+        if flipid[ax] == -1:
+            target[ax] = np.array(sample.shape[ax + 1]) - target[ax]
+            if len(bboxes.shape) == 1:
+                print()
+            bboxes[:, ax] = np.array(sample.shape[ax + 1]) - bboxes[:, ax]
+            # target[ax + 3] = np.array(sample.shape[ax + 1]) - target[ax + 3]
+            # bboxes[:, ax + 3] = np.array(sample.shape[ax + 1]) - bboxes[:, ax + 3]
+    return sample, target, bboxes
+
+def augment(sample, target, bboxes, do_flip=True, do_rotate=True, do_swap=True):
+    if do_rotate and np.random.randint(0,2):
+        sample, target, bboxes = img_rotate(sample, target, bboxes)
+        
+    if do_swap and np.random.randint(0,2):
+        sample, target, bboxes = img_swap(sample, target, bboxes)
+
+    if do_flip and np.random.randint(0,2):
+        sample, target, bboxes = img_flip(sample, target, bboxes)
+
     return sample, target, bboxes
 
 class Crop(object):

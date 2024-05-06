@@ -199,6 +199,7 @@ class MsaNet_R(nn.Module):
     def forward(self, inputs, truth_boxes, truth_labels, split_combiner=None, nzhw=None, lobe_info=None):
         # features, feat_4 = self.feature_net(inputs)
         if self.mode in ['train', 'valid']:
+            # breakpoint()
             features, feat_4 = data_parallel(self.feature_net, (inputs))
             fs = features[-1]
             fs_shape = fs.shape
@@ -305,7 +306,6 @@ class MsaNet_R(nn.Module):
 
 
         self.rpn_proposals = []
-        # breakpoint()
         if self.use_rcnn or self.mode in ['eval', 'test']:
             self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                   self.rpn_logits_flat, self.rpn_deltas_flat)
@@ -314,7 +314,7 @@ class MsaNet_R(nn.Module):
             # self.rpn_proposals = torch.zeros((0, 8)).cuda()
             self.rpn_labels, self.rpn_label_assigns, self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights = \
                 make_rpn_target(self.cfg, self.mode, inputs, self.rpn_window, truth_boxes, truth_labels)
-
+            # breakpoint()
             if self.use_rcnn:
                 # self.rpn_proposals = torch.zeros((0, 8)).cuda()
                 self.rpn_proposals, self.rcnn_labels, self.rcnn_assigns, self.rcnn_targets = \

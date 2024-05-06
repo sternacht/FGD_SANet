@@ -568,18 +568,25 @@ def crop_with_lobe(z:str, yx:str, align=16):
                       be floor and end will be ceil
         Output: 6 int 
     '''
+    if align <= 0:
+        raise ValueError('should align to an integer which larger than zero')
+    if align != np.round(align):
+        align = np.round(align)
+        warnings.warn('should align to an integer, not float')
+
     zlobe = z.replace('\n','').split(',')
     Ds, De = [int(z_) for z_ in zlobe]
     yxlobe = yx.replace('\n','').split(',')
     Hs, He, Ws, We = [int(yx_) for yx_ in yxlobe]
     
-    # align to 16 or 32
-    Ds = (Ds//align)*align
-    De = ((De+align-1)//align)*align
-    Hs = (Hs//align)*align
-    He = ((He+align-1)//align)*align
-    Ws = (Ws//align)*align
-    We = ((We+align-1)//align)*align
+    if align > 1:
+        # align
+        Ds = (Ds//align)*align
+        De = ((De+align-1)//align)*align
+        Hs = (Hs//align)*align
+        He = ((He+align-1)//align)*align
+        Ws = (Ws//align)*align
+        We = ((We+align-1)//align)*align
 
     return (Ds, De, Hs, He, Ws, We)
 

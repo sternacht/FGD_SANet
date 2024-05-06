@@ -557,6 +557,7 @@ def collectNoduleAnnotations(annotations, data_dir, seriesUIDs):
     noduleCount = 0
     noduleCountTotal = 0
     
+    header = annotations[0]
     for seriesuid in seriesUIDs[1:]:
         # print('adding nodule annotations: ' + seriesuid)
         
@@ -564,7 +565,6 @@ def collectNoduleAnnotations(annotations, data_dir, seriesUIDs):
         numberOfIncludedNodules = 0
         
         # add included findings
-        header = annotations[0]
         for annotation in annotations[1:]:
             nodule_seriesuid = annotation[header.index(seriesuid_label)]
             

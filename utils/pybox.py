@@ -5,11 +5,15 @@ from box import cpu_nms, cpu_overlap
 
 def torch_nms(dets, thresh):
     """
-    dets has to be a tensor
+    dets has to be a tensor:[prob, coord1, coord2, coord3, shape1, shape2, shape3]
     """
+    # convert to tensor
     if isinstance(dets, np.ndarray):
         dets = torch.from_numpy(dets).float().contiguous()
-        
+    # convert dtype to float32
+    if not isinstance(dets, torch.float32):
+        dets = dets.float().contiguous()
+
     if not dets.is_cuda:
         z = dets[:, 1]
         y = dets[:, 2]

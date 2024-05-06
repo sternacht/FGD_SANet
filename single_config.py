@@ -53,15 +53,15 @@ elif dataset == 'pn9_sanet':
     datasets_info['augtype'] = {'flip': False, 'rotate': False, 'scale': True, 'swap': False}
 elif dataset == 'ME_LDCT':
     datasets_info['dataset'] = 'ME_LDCT'
-    datasets_info['train_list'] = [r'F:\master\code\Lung_Nodule\FL_lung_nodule_datasplit_ME_LDCT\client0_train.txt']
-    datasets_info['val_list'] = [r'F:\master\code\Lung_Nodule\FL_lung_nodule_datasplit_ME_LDCT\client0_val.txt']
+    datasets_info['train_list'] = r'F:\master\code\Lung_Nodule\FL_lung_nodule_datasplit_ME_LDCT\client0_train.txt'
+    datasets_info['val_list'] = r'F:\master\code\Lung_Nodule\FL_lung_nodule_datasplit_ME_LDCT\client0_val.txt'
     datasets_info['test_name'] = r'F:\master\code\Lung_Nodule\FL_lung_nodule_datasplit_ME_LDCT\client0_test.txt'
     datasets_info['data_dir'] = r'F:\master\code\Lung_Nodule\dataset\ME_dataset'
     datasets_info['clip_max'] = 400     # max HU value
     datasets_info['clip_min'] = -1000   # min HU value
     datasets_info['annotation_dir'] = r'F:\master\code\Lung_Nodule\FL_lung_nodule_datasplit_ME_LDCT\client0_test_annotation.csv'
-    datasets_info['BATCH_SIZE'] = 2
-    datasets_info['label_types'] = ['bbox']
+    datasets_info['BATCH_SIZE'] = 6
+    datasets_info['label_types'] = 'bbox'
     datasets_info['roi_names'] = ['nodule']
     datasets_info['crop_size'] = [128, 128, 128]
     datasets_info['bbox_border'] = 0
@@ -105,7 +105,7 @@ net_config = {
     'pad_value': 170,
 
     # region proposal network configuration
-    'rpn_train_bg_thresh_high': 0.02,
+    'rpn_train_bg_thresh_high': 0.1,
     'rpn_train_fg_thresh_low': 0.3,
     
     'rpn_train_nms_num': 300,
@@ -161,9 +161,9 @@ train_config = {
     'momentum': 0.9,
     'weight_decay': 1e-5,
 
-    'epochs': 100, #200 #400
+    'epochs': 99, #200 #400
     'epoch_save': 3,
-    'epoch_rcnn': 101, #20 #47
+    'epoch_rcnn': 100, #20 #47
     'num_workers': 6, #30
 
     'hard_example_solution': 'fOHEM',# 'focal', 'OHEM' or 'fOHEM'
@@ -182,15 +182,15 @@ elif train_config['optimizer'] == 'RMSprop':
 train_config['RESULTS_DIR'] = os.path.join(r'F:\master\code\LSSANet-main\{}_results'.format(train_config['net']),
                                   datasets_info['dataset'])
 # train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"test")
-train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"{train_config['optimizer']}{train_config['init_lr']}_Bs{datasets_info['BATCH_SIZE']}x4_{train_config['hard_example_solution']}10_bb0_neg")
+train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"{train_config['optimizer']}{train_config['init_lr']}_Bs{datasets_info['BATCH_SIZE']}x4_{train_config['hard_example_solution']}10_bb0_nbneg_2")
 if net_config['FGD']:
     train_config['out_dir'] += '_FGD'
-# train_config['initial_checkpoint'] = None
-train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs2x4_fOHEM10_bb0_neg\model\last.ckpt'
+train_config['initial_checkpoint'] = None
+# train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb0_nbneg\model\last.ckpt'
 
 # out_dir = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_OHEM10_bb0'
-test_config['out_dir'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs2x4_fOHEM10_bb0_neg'#out_dir
-test_config['checkpoint'] = rf"{test_config['out_dir']}\model\099.ckpt"
+test_config['out_dir'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb0_nbneg'   # out_dir
+test_config['checkpoint'] = rf"{test_config['out_dir']}\model\072.ckpt"
 
 # test_config['checkpoint'] = rf'F:\master\code\LSSANet-main\MsaNet_results\(teacher)AdamW0.001_Ercnn100_Bs12_OHEM_wd1e-5_fullrpn_noinit.ckpt'
 # test_config['valid_checkpoint'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_OHEM10_bb0\model\075.ckpt'
