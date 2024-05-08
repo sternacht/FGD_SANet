@@ -29,6 +29,9 @@ def box_transform_inv(windows, deltas, weight):
     windows: [num_window, z, y, x, D, H, W]
     targets: [num_target, z, y, x, D, H, W]
     """
+    if len(windows.shape) == 1:
+        windows = windows[np.newaxis,...]
+        deltas  = deltas[np.newaxis,...]
     num   = len(windows)
     wz, wy, wx, wd, wh, ww = weight
     predictions = np.zeros((num, 6), dtype=np.float32)

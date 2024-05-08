@@ -186,8 +186,8 @@ train_config['RESULTS_DIR'] = os.path.join(r'F:\master\code\LSSANet-main\{}_resu
 train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"{train_config['optimizer']}{train_config['init_lr']}_Bs{datasets_info['BATCH_SIZE']}x4_{train_config['hard_example_solution']}10_bb0_DIoU_nbneg")
 if net_config['FGD']:
     train_config['out_dir'] += '_FGD'
-train_config['initial_checkpoint'] = None
-# train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb0_nbneg\model\last.ckpt'
+# train_config['initial_checkpoint'] = None
+train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb0_DIoU_nbneg\model\last.ckpt'
 
 # out_dir = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_OHEM10_bb0'
 test_config['out_dir'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb4_nbneg'   # out_dir
