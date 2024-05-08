@@ -67,6 +67,7 @@ def main():
         label_types = config['label_types']
         augtype = args.augtype
         # num_workers = config['num_workers']
+        border = config['bbox_border']
         num_workers = 1
         # print(net)
 
@@ -109,11 +110,11 @@ def main():
                 net.load_state_dict(checkpoint['state_dict'], strict=True)
 
             
-        eval(net, test_loader, annotation_dir, data_dir, save_dir, create_data=create)
+        eval(net, test_loader, annotation_dir, data_dir, save_dir, border, create_data=create)
     else:
         logging.error('Mode %s is not supported' % (args.mode))
 
-def eval(net, dataset, annotation_dir, data_dir, save_dir=None, create_data=True):
+def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create_data=True):
     net.set_mode('eval')
     # net.use_rcnn = True
     # aps = []
@@ -138,7 +139,9 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, create_data=True
                 rpns = net.rpn_proposals.cpu().numpy()
                 # breakpoint()
                 if len(rpns):
-                    rpns = rpns[:, 1:]
+                    # GT size was expanded by a border to make it larger and easier to detect.
+                    # So the true predicted bbox size have to be smaller
+                    rpns = rpns[:, 1:] - [0,0,0,0,border, border, border]
                     # rpn.extend(rpns)
                     np.save(os.path.join(save_dir, f'{i}_rpns.npy'), rpns)
         

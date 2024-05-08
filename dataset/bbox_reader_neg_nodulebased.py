@@ -124,6 +124,10 @@ class BboxReader_NegNB(Dataset):
                 sample, target, bboxes = self.augment(sample, target, bboxes)   # augment
                 bbox = fillter_box(bboxes, self.cfg['crop_size'])  # remove bboxes out of range
                 label = np.ones(len(bbox), dtype=np.int16)
+
+                # make the bbox larger
+                for i in range(3):
+                    bbox[:, i + 3] = bbox[:, i + 3] + self.cfg['bbox_border']
             else:
                 neg_bbox = pick_rand_neg(bboxes, lobe_info)     # crop random patch as negative sample
                 sample = imgs[:, neg_bbox[0]-64:neg_bbox[0]+64, neg_bbox[1]-64:neg_bbox[1]+64, neg_bbox[2]-64:neg_bbox[2]+64]
@@ -133,6 +137,7 @@ class BboxReader_NegNB(Dataset):
             if sample.shape[1] != self.cfg['crop_size'][0] or sample.shape[2] != \
                 self.cfg['crop_size'][1] or sample.shape[3] != self.cfg['crop_size'][2]:
                 print(filename, sample.shape, imgs.shape, lobe_info)
+                
 
             return [torch.from_numpy(sample.astype(np.float16)), bbox, label]
 
@@ -181,10 +186,10 @@ class BboxReader_NegNB(Dataset):
 
     def load_img(self, filename, align=16, mode='train'):
         path, dir = filename.split(',')
-        img = np.load(os.path.join(self.data_dir, '%s\\npy\\%s.npy' % (path, dir)))
+        img = np.load(os.path.join(path, 'npy', f'{dir}.npy'))
         img = img[np.newaxis,...] # (y, x, z) -> (1, y, x, z)
         ## load lobe info
-        with open(os.path.join(self.data_dir, '%s\\npy\\lobe_info.txt' %(path))) as f:
+        with open(os.path.join(path, 'npy', 'lobe_info.txt')) as f:
             # 'z_start,z_end\n'
             # 'y_start,y_end,x_start,x_end'
             lobe_info = f.readlines()[-2:]

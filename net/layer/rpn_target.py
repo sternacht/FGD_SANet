@@ -44,8 +44,10 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
         # breakpoint()
         _, depth, height, width = input.size()
 
+        border = cfg['bbox_border']
+        true_truth_box = truth_box.copy() - [0,0,0,border,border,border]
         # Get sure background anchor boxes
-        overlap = torch_overlap(window, truth_box)
+        overlap = torch_overlap(window, true_truth_box)
 
         # For each anchor box, get the index of the ground truth box that
         # has the largest IoU with it
@@ -68,18 +70,20 @@ def make_one_rpn_target(cfg, mode, input, window, truth_box, truth_label):
         # In case no anchor box that overlaps with the ground truth box meets the threshold, 
         # for each ground truth box, we include anchor box that has the highest IoU with it, 
         # include multiple maxs if there exists more than one anchor box
-        # argmax_overlap = np.argmax(overlap,0)   # 每個 GT 對應 anchors 中 IoU 最大的 -> size=[num_of_GT,]
-        # max_overlap = overlap[argmax_overlap,np.arange(num_truth_box)]  # 根據 argmax_overlap 找到該值
-        # argmax_overlap, la = np.where(overlap == max_overlap)    # 所有符合最大 IoU 值的 anchor
+        
+        argmax_overlap = np.argmax(overlap,0)   # 每個 GT 對應 anchors 中 IoU 最大的 -> size=[num_of_GT,]
+        max_overlap = overlap[argmax_overlap,np.arange(num_truth_box)]  # 根據 argmax_overlap 找到該值
+        argmax_overlap, la = np.where(overlap == max_overlap)    # 所有符合最大 IoU 值的 anchor
 
-        # fg_index = argmax_overlap
+        fg_index = argmax_overlap
 
-        # label[fg_index] = 1
-        # label_weight[fg_index] = 1
-        # label_assign[fg_index] = la
+        label[fg_index] = 1
+        label_weight[fg_index] = 1
+        label_assign[fg_index] = la
 
-        ignore_index = np.where(((max_overlap >= cfg['rpn_train_bg_thresh_high'])&(max_overlap < cfg['rpn_train_fg_thresh_low'])))[0]
-        label_weight[ignore_index] = 0
+        # ignore_index = np.where(((max_overlap >= cfg['rpn_train_bg_thresh_high'])&(max_overlap < cfg['rpn_train_fg_thresh_low'])))[0]
+        # label_weight[ignore_index] = 0
+
         # assign bg index label to 0 here for some reason.
         # 避免在前一步強制給每個 GT 一個 anchor時，給到太小的IoU
         label[bg_index] = 0

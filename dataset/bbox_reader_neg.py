@@ -47,7 +47,6 @@ class BboxReader_Neg(Dataset):
         self.filenames = []
         for num, fns in enumerate(filenames):
             fn = fns.split(',')
-            # with open(os.path.join(data_dir, '%s\\mask\\%s_nodule_count.json' % (fn,fn)), 'r') as f:
             with open(os.path.join(fn[0], 'npy', 'series_metadata.txt'), 'r') as f:
                 nodule_shape_str = f.read().splitlines()[4]
                 nh,nw,nd = nodule_shape_str.replace('\n','').split(',')
@@ -214,10 +213,10 @@ class BboxReader_Neg(Dataset):
 
     def load_img(self, filename, align=16, mode='train'):
         path, dir = filename.split(',')
-        img = np.load(os.path.join(self.data_dir, '%s\\npy\\%s.npy' % (path, dir)))
+        img = np.load(os.path.join(self.data_dir, path, 'npy', f'{dir}.npy'))
         img = img[np.newaxis,...] # (y, x, z) -> (1, y, x, z)
         ## load lobe info
-        with open(os.path.join(self.data_dir, '%s\\npy\\lobe_info.txt' %(path))) as f:
+        with open(os.path.join(self.data_dir, path, 'npy', 'lobe_info.txt')) as f:
             # 'z_start,z_end\n'
             # 'y_start,y_end,x_start,x_end'
             lobe_info = f.readlines()[-2:]

@@ -14,15 +14,14 @@ def box_transform(windows, targets, weight):
     tz, ty, tx = targets[:, 0], targets[:, 1], targets[:, 2]
     td, th, tw = targets[:, 3], targets[:, 4], targets[:, 5]
 
-    dz = wz * abs(tz - bz) / bd
-    dy = wy * abs(ty - by) / bh
-    dx = wx * abs(tx - bx) / bw
+    dz = wz * (tz - bz) / bd
+    dy = wy * (ty - by) / bh
+    dx = wx * (tx - bx) / bw
     dd = wd * np.log(td / bd)
     dh = wh * np.log(th / bh)
     dw = ww * np.log(tw / bw)
     deltas = np.vstack((dz, dy, dx, dd, dh, dw)).transpose()
     return deltas
-
 
 def box_transform_inv(windows, deltas, weight):
     """
@@ -33,7 +32,6 @@ def box_transform_inv(windows, deltas, weight):
     num   = len(windows)
     wz, wy, wx, wd, wh, ww = weight
     predictions = np.zeros((num, 6), dtype=np.float32)
-
     bz, by, bx = windows[:, 0], windows[:, 1], windows[:, 2]
     bd, bh, bw = windows[:, 3], windows[:, 4], windows[:, 5]
     bz = bz[:, np.newaxis]
@@ -66,7 +64,6 @@ def box_transform_inv(windows, deltas, weight):
     predictions[:, 5::6] = w
 
     return predictions
-
 
 def clip_boxes(boxes, img_size):
     """

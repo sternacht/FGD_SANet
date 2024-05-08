@@ -99,7 +99,7 @@ def main():
     
     
     # Initilize network
-    net = getattr(this_module, net)(net_config, hes=train_config['hard_example_solution'])
+    net = getattr(this_module, net)(config, hes=train_config['hard_example_solution'])
     print(f'CUDA:{torch.cuda.is_available()}')
     net = net.cuda()
     print(sum(p.numel() for p in net.parameters() if p.requires_grad))
@@ -299,8 +299,8 @@ def train(net, train_loader, optimizer, epoch, writer, scaler=None, batchsize_sc
 
     TP = np.sum(rpn_stats[:, 0])
     recall = 100.0 * TP / np.sum(rpn_stats[:, 1])  #TP/(TP+FN)->TP/total pos
-    precision = 100.0 * TP / (TP + np.sum(rpn_stats[:, 3])-np.sum(rpn_stats[:, 2])) #TP/(TP+FP)
-    F1_score = 2*recall*precision/(recall+precision)
+    # precision = 100.0 * TP / (TP + np.sum(rpn_stats[:, 3])-np.sum(rpn_stats[:, 2])) #TP/(TP+FP)
+    # F1_score = 2*recall*precision/(recall+precision)
     print(f'{Fore.MAGENTA}rpn_stats: recall(tpr) {recall}, '
           f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {int(np.sum(rpn_stats[:, 1]))}, '
           f'total neg {int(np.sum(rpn_stats[:, 3]))}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
@@ -388,17 +388,12 @@ def validate(net, val_loader, epoch, writer):
     rpn_stats = np.asarray(rpn_stats, np.float32)
     print('Val Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time()-s, np.average(total_loss)))
     print(f'{Fore.GREEN}rpn_cls {np.average(rpn_cls_loss)}, rpn_reg {np.average(rpn_reg_loss)}{Fore.RESET}')
-    print(f'{Fore.CYAN}rpn_stats: recall(tpr) {100.0 * np.sum(rpn_stats[:, 0]) / np.sum(rpn_stats[:, 1])}, '
-          f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {int(np.sum(rpn_stats[:, 1]))}, '
-          f'total neg {int(np.sum(rpn_stats[:, 3]))}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
-          f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '
-          f'{np.mean(rpn_stats[:, 8]):.4f}, {np.mean(rpn_stats[:, 9]):.4f}{Fore.RESET}')
     
     TP = np.sum(rpn_stats[:, 0])
     recall = 100.0 * TP / np.sum(rpn_stats[:, 1])  #TP/(TP+FN)->TP/total pos
     precision = 100.0 * TP / (TP + np.sum(rpn_stats[:, 3])-np.sum(rpn_stats[:, 2])) #TP/(TP+FP)
     F1_score = 2*recall*precision/(recall+precision)
-    print(f'{Fore.MAGENTA}rpn_stats: recall(tpr) {recall}, '
+    print(f'{Fore.CYAN}rpn_stats: recall(tpr) {recall}, '
           f'tnr {100.0 * np.sum(rpn_stats[:, 2]) / np.sum(rpn_stats[:, 3])}, total pos {int(np.sum(rpn_stats[:, 1]))}, '
           f'total neg {int(np.sum(rpn_stats[:, 3]))}, reg {np.mean(rpn_stats[:, 4]):.4f}, {np.mean(rpn_stats[:, 5]):.4f}, '
           f'{np.mean(rpn_stats[:, 6]):.4f}, {np.mean(rpn_stats[:, 7]):.4f}, '

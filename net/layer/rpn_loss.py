@@ -2,6 +2,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.cuda.amp import autocast as autocast
+import numpy as np
+from net.layer.util import box_transform_inv
+from utils.util import DIoU
 
 
 def weighted_focal_loss_for_cross_entropy(logits, labels, weights, gamma=2.):
@@ -140,7 +143,7 @@ def fOHEM(neg_output, num_hard):
     neg_output = torch.index_select(neg_output, 0, idcs)
     return neg_output
 
-def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, cfg, mode='train', delta_sigma=3.0, hes='OHEM'):
+def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, windows, cfg, mode='train', delta_sigma=3.0, hes='OHEM'):
     batch_size, num_windows, num_classes = logits.size()
     labels = labels.long()
 
@@ -179,18 +182,24 @@ def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, cfg
     targets = targets.view(batch_size, 6)
 
     index = (labels != 0).nonzero()[:,0]
+    loss_weights = np.array(cfg['box_reg_loss_weight'])
+    loss_weights = loss_weights/loss_weights.sum() * len(loss_weights)
+    # breakpoint()
     if len(index):
+        GT = box_transform_inv(windows[index.cpu()%len(windows)], targets.cpu().detach().numpy()[index.cpu()],cfg['box_reg_weight'])
+        pred = box_transform_inv(windows[index.cpu()%len(windows)], deltas.cpu().detach().numpy()[index.cpu()],cfg['box_reg_weight'])
         deltas  = deltas[index]
         targets = targets[index]
 
         rpn_reg_loss = 0
         reg_losses = []
         for i in range(6):
-            l = F.smooth_l1_loss(deltas[:, i], targets[:, i], beta=(1.0/9.0))
+            l = F.smooth_l1_loss(deltas[:, i], targets[:, i], beta=(1.0/9.0)) * loss_weights[i]
             rpn_reg_loss += l
             reg_losses.append(l.data.item())
         rpn_reg_loss = rpn_reg_loss/6
-
+        for t, p in zip(GT, pred):
+            rpn_reg_loss += (1-DIoU(t[:3], t[3:], p[:3], p[3:]))
     else:
         reg_losses = torch.tensor((0.,0.,0.,0.,0.,0.)).cuda()
         rpn_reg_loss = reg_losses.mean()

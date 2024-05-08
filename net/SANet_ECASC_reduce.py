@@ -20,19 +20,20 @@ affine = True
 class FeatureNet(nn.Module):
     def __init__(self, config, in_channels, out_channels, block=ECA_SC):
         super(FeatureNet, self).__init__()
-        self.preBlock = nn.Sequential(
-            PreBlock(1),
-            PreBlock(24))
 
         self.forw1 = nn.Sequential(
+            block(1, 24),
+            block(24, 24))
+
+        self.forw2 = nn.Sequential(
             block(24, 48),
             block(48, 48))
 
-        self.forw2 = nn.Sequential(
+        self.forw3 = nn.Sequential(
             block(48, 72),
             block(72, 72))
 
-        self.forw3 = nn.Sequential(
+        self.forw4 = nn.Sequential(
             block(72, 96),
             block(96, 96))
 
@@ -56,33 +57,29 @@ class FeatureNet(nn.Module):
             nn.BatchNorm3d(96),
             nn.ReLU(inplace=True))
 
-        # multi-scale aggregation
-        self.MSA1 = MultiScalAggregation3fs([48,72,96])
-        self.MSA2 = MultiScalAggregation2fs([72,96])
-
         # self.conv = nn.Sequential(
         #     nn.Conv3d(128,64,kernel_size=3, padding='same'),
         #     nn.BatchNorm3d(64),
         #     nn.ReLU(inplace=True))
 
     def forward(self, x):
-        fs1 = self.preBlock(x)#24
+        fs1 = self.forw1(x)#128**3 *24
 
-        fs1_pool, _ = self.maxpool1(fs1)
-        fs2 = self.forw1(fs1_pool)#48
+        fs1_pool, _ = self.maxpool1(fs1)#64**3
+        fs2 = self.forw2(fs1_pool)#48
 
-        fs2_pool, _ = self.maxpool2(fs2)
-        fs3 = self.forw2(fs2_pool)#72
+        fs2_pool, _ = self.maxpool2(fs2)#32**3
+        fs3 = self.forw3(fs2_pool)#72
         #out2 = self.drop(out2)
 
-        fs3_pool, _ = self.maxpool3(fs3)
-        fs4 = self.forw3(fs3_pool)#96
+        fs3_pool, _ = self.maxpool3(fs3)#16**3
+        fs4 = self.forw4(fs3_pool)#96
         #out4 = self.drop(out4)
         
-        rev2 = self.MSA2([fs3,fs4])  # 12* 12* 12* 96
-        rev1 = self.MSA1([fs2,fs3,fs4])  # 24* 24* 24* 72
+        rev2 = fs4  #16**3 *96
+        rev1 = fs3  #32**3 *72
 
-        up2 = self.path2(rev2)            # 24*24*24*96
+        up2 = self.path2(rev2)            # 16**3 *96
         comb2 = self.back2(torch.cat((up2, rev1), 1))   # 96+72->128
         return [x, fs2, comb2], fs3
 
@@ -173,9 +170,9 @@ class CropRoi(nn.Module):
 
         return crops
 
-class MsaNet_R(nn.Module):
+class SANet_ECASC_R(nn.Module):
     def __init__(self, cfg, mode='train',hes='OHEM'):
-        super(MsaNet_R, self).__init__()
+        super(SANet_ECASC_R, self).__init__()
 
         self.cfg = cfg
         self.mode = mode
@@ -199,7 +196,6 @@ class MsaNet_R(nn.Module):
     def forward(self, inputs, truth_boxes, truth_labels, split_combiner=None, nzhw=None, lobe_info=None):
         # features, feat_4 = self.feature_net(inputs)
         if self.mode in ['train', 'valid']:
-            # breakpoint()
             features, feat_4 = data_parallel(self.feature_net, (inputs))
             fs = features[-1]
             fs_shape = fs.shape
@@ -306,6 +302,7 @@ class MsaNet_R(nn.Module):
 
 
         self.rpn_proposals = []
+        # breakpoint()
         if self.use_rcnn or self.mode in ['eval', 'test']:
             self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                   self.rpn_logits_flat, self.rpn_deltas_flat)
@@ -314,7 +311,7 @@ class MsaNet_R(nn.Module):
             # self.rpn_proposals = torch.zeros((0, 8)).cuda()
             self.rpn_labels, self.rpn_label_assigns, self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights = \
                 make_rpn_target(self.cfg, self.mode, inputs, self.rpn_window, truth_boxes, truth_labels)
-            # breakpoint()
+
             if self.use_rcnn:
                 # self.rpn_proposals = torch.zeros((0, 8)).cuda()
                 self.rpn_proposals, self.rcnn_labels, self.rcnn_assigns, self.rcnn_targets = \
@@ -357,7 +354,7 @@ class MsaNet_R(nn.Module):
         # breakpoint()
         self.rpn_cls_loss, self.rpn_reg_loss, rpn_stats = \
            rpn_loss( self.rpn_logits_flat, self.rpn_deltas_flat, self.rpn_labels,
-            self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights, self.rpn_window, self.cfg, mode=self.mode, hes=self.hes)
+            self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights, self.cfg, mode=self.mode, hes=self.hes)
     
         if self.use_rcnn:
             self.rcnn_cls_loss, self.rcnn_reg_loss, rcnn_stats = \

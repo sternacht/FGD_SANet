@@ -127,7 +127,8 @@ net_config = {
     'rcnn_test_nms_pre_score_threshold': 0.0,
     'rcnn_test_nms_overlap_threshold': 0.1,
 
-    'box_reg_weight': [2., 2., 2., 1., 1., 1.],
+    'box_reg_weight': [1., 1., 1., 1., 1., 1.],
+    'box_reg_loss_weight': [1., 1., 1., 1., 1., 1.],
     
     'FGD': False, # using FGD to train student model
     'teacher': r'F:\master\code\LSSANet-main\MsaNet_results\ME_LDCT\Teacher_history\AdamW0.001_Ercnn100_Bs12_OHEM\model\072.ckpt',
@@ -182,15 +183,15 @@ elif train_config['optimizer'] == 'RMSprop':
 train_config['RESULTS_DIR'] = os.path.join(r'F:\master\code\LSSANet-main\{}_results'.format(train_config['net']),
                                   datasets_info['dataset'])
 # train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"test")
-train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"{train_config['optimizer']}{train_config['init_lr']}_Bs{datasets_info['BATCH_SIZE']}x4_{train_config['hard_example_solution']}10_bb0_nbneg_2")
+train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"{train_config['optimizer']}{train_config['init_lr']}_Bs{datasets_info['BATCH_SIZE']}x4_{train_config['hard_example_solution']}10_bb0_DIoU_nbneg")
 if net_config['FGD']:
     train_config['out_dir'] += '_FGD'
 train_config['initial_checkpoint'] = None
 # train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb0_nbneg\model\last.ckpt'
 
 # out_dir = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_OHEM10_bb0'
-test_config['out_dir'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb0_nbneg'   # out_dir
-test_config['checkpoint'] = rf"{test_config['out_dir']}\model\072.ckpt"
+test_config['out_dir'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_fOHEM10_bb4_nbneg'   # out_dir
+test_config['checkpoint'] = rf"{test_config['out_dir']}\model\078.ckpt"
 
 # test_config['checkpoint'] = rf'F:\master\code\LSSANet-main\MsaNet_results\(teacher)AdamW0.001_Ercnn100_Bs12_OHEM_wd1e-5_fullrpn_noinit.ckpt'
 # test_config['valid_checkpoint'] = rf'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_OHEM10_bb0\model\075.ckpt'

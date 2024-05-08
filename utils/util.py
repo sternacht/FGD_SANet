@@ -48,19 +48,6 @@ def nodules_IoU(nodule1, nodule2):
     v = x_overlap * y_overlap*z_overlap
     return v / (w*h*d+aw*ah*ad-v)
 
-def IoU(cord1, shape, cord2, shape2):
-    x1, y1, z1 = cord1
-    w, h, d = shape      # nodule bbox shape
-    x2, y2, z2 = cord2
-    aw, ah, ad = shape2  # anchor shape
-
-    x_overlap = min(x1+w/2, x2+aw/2) - max(x1-w/2, x2-aw/2) if (max(x1+w/2, x2+aw/2)-min(x1-w/2, x2-aw/2)) < w+aw else 0
-    y_overlap = min(y1+h/2, y2+ah/2) - max(y1-h/2, y2-ah/2) if (max(y1+h/2, y2+ah/2)-min(y1-h/2, y2-ah/2)) < h+ah else 0
-    z_overlap = min(z1+d/2, z2+ad/2) - max(z1-d/2, z2-ad/2) if (max(z1+d/2, z2+ad/2)-min(z1-d/2, z2-ad/2)) < d+ad else 0
-    v = x_overlap * y_overlap*z_overlap
-    return v / (w*h*d+aw*ah*ad-v)
-
-
 class Logger(object):
     def __init__(self,logfile):
         self.terminal = sys.stdout
@@ -610,3 +597,30 @@ def pick_rand_neg(gt, lobes):
         if not overlap_nodule:
             break
     return (rz, ry, rx)
+
+def IoU(bbox1, bbox2):
+    intersection_min = np.maximum(bbox1[:3], bbox2[:3])
+    intersection_max = np.minimum(bbox1[3:], bbox2[3:])
+    intersection_dims = np.maximum(0, intersection_max - intersection_min)
+
+    intersection_volume = np.prod(intersection_dims)
+
+    volume1 = np.prod(bbox1[3:] - bbox1[:3])
+    volume2 = np.prod(bbox2[3:] - bbox2[:3])
+    union_volume = volume1 + volume2 - intersection_volume
+
+    iou = intersection_volume / union_volume if union_volume > 0 else 0
+    return iou
+
+
+def distance(cord1, cord2):
+    return ((cord1 - cord2)**2).sum()
+
+def DIoU(cord1, shape1, cord2, shape2):
+    bbox1 = np.array([*cord1-shape1/2, *cord1+shape1/2])
+    bbox2 = np.array([*cord2-shape2/2, *cord2+shape2/2])
+
+    c1 = np.amax([bbox1,bbox2],axis=0)[3:]
+    c2 = np.amin([bbox1,bbox2],axis=0)[:3]
+
+    return IoU(bbox1, bbox2) - distance(cord1, cord2)/distance(c1, c2)

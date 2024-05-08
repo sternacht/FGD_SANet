@@ -11,8 +11,8 @@ def torch_nms(dets, thresh):
     if isinstance(dets, np.ndarray):
         dets = torch.from_numpy(dets).float().contiguous()
     # convert dtype to float32
-    if not isinstance(dets, torch.float32):
-        dets = dets.float().contiguous()
+    # if not isinstance(dets, torch.float32):
+    #     dets = dets.float().contiguous()
 
     if not dets.is_cuda:
         z = dets[:, 1]

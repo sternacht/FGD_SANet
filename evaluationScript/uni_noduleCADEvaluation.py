@@ -602,7 +602,7 @@ def collect(annotations_filename, data_dir, seriesuids_filename):
     seriesUIDs = []
     for seriesUID in seriesUIDs_csv:
         fdir, fname = seriesUID
-        fpath = os.path.join('%s\\mask\\%s_nodule_count.json' % (fdir,fname))
+        fpath = os.path.join(fdir, 'mask',f'{fname}_nodule_count.json')
         seriesUIDs.append(fpath)
 
     allNodules = collectNoduleAnnotations(annotations, data_dir, seriesUIDs)
