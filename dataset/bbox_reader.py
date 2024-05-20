@@ -161,7 +161,7 @@ class BboxReader(Dataset):
             # filename = self.filenames[self.eval_crop[idx][0]]
             
             # imgs = self.load_img(filename)
-            imgs, lobe_info = self.load_img(filename, mode='eval')
+            imgs, lobe_info = self.load_img(filename, align=32, mode='eval')
             # imgs = self.eval_crop_img(imgs, self.eval_crop[idx])
             # padding
             image = pad2factor(imgs[0], pad_value=0.67142)

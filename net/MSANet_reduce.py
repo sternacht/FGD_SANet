@@ -307,7 +307,7 @@ class MsaNet_R(nn.Module):
 
         self.rpn_proposals = []
         if self.use_rcnn or self.mode in ['eval', 'test']:
-            self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
+            self.rpn_proposals, keeps = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                   self.rpn_logits_flat, self.rpn_deltas_flat)
             
         if self.mode in ['train', 'valid']:
@@ -356,8 +356,8 @@ class MsaNet_R(nn.Module):
         rcnn_stats = None
         # breakpoint()
         self.rpn_cls_loss, self.rpn_reg_loss, rpn_stats = \
-           rpn_loss( self.rpn_logits_flat, self.rpn_deltas_flat, self.rpn_labels,
-            self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights, self.rpn_window, self.cfg, mode=self.mode, hes=self.hes)
+            rpn_loss( self.rpn_logits_flat, self.rpn_deltas_flat, self.rpn_labels,
+            self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights, self.cfg, mode=self.mode, hes=self.hes)
     
         if self.use_rcnn:
             self.rcnn_cls_loss, self.rcnn_reg_loss, rcnn_stats = \

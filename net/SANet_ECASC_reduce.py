@@ -22,8 +22,8 @@ class FeatureNet(nn.Module):
         super(FeatureNet, self).__init__()
 
         self.forw1 = nn.Sequential(
-            block(1, 24),
-            block(24, 24))
+            ResBlock3d(1, 24),
+            ResBlock3d(24, 24))
 
         self.forw2 = nn.Sequential(
             block(24, 48),
@@ -304,7 +304,7 @@ class SANet_ECASC_R(nn.Module):
         self.rpn_proposals = []
         # breakpoint()
         if self.use_rcnn or self.mode in ['eval', 'test']:
-            self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
+            self.rpn_proposals, keeps = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                   self.rpn_logits_flat, self.rpn_deltas_flat)
             
         if self.mode in ['train', 'valid']:

@@ -7,6 +7,7 @@ import numpy as np
 from scipy.sparse import csc_matrix
 from collections import defaultdict
 import os
+import itertools
 import shutil
 import operator
 import warnings
@@ -598,29 +599,51 @@ def pick_rand_neg(gt, lobes):
             break
     return (rz, ry, rx)
 
+def get_series(Ds, De, Hs, He, Ws, We, patch_size=128, max_overlap_ratio=0.25):
+    max_overlap = patch_size*max_overlap_ratio
+    max_patch_distance = patch_size-max_overlap
+
+    num_D = math.ceil((De-Ds-max_overlap)/max_patch_distance)
+    num_H = math.ceil((He-Hs-max_overlap)/max_patch_distance)
+    num_W = math.ceil((We-Ws-max_overlap)/max_patch_distance)
+
+    D_series = np.linspace(0, De-Ds-patch_size, num_D)
+    D_series = np.round(D_series).astype(np.int32)
+    H_series = np.linspace(0, He-Hs-patch_size, num_H)
+    H_series = np.round(H_series).astype(np.int32)
+    W_series = np.linspace(0, We-Ws-patch_size, num_W)
+    W_series = np.round(W_series).astype(np.int32)
+
+    patch_series = list(itertools.product(D_series, H_series, W_series))
+    return patch_series
+
 def IoU(bbox1, bbox2):
-    intersection_min = np.maximum(bbox1[:3], bbox2[:3])
-    intersection_max = np.minimum(bbox1[3:], bbox2[3:])
-    intersection_dims = np.maximum(0, intersection_max - intersection_min)
+    intersection_min = torch.max(bbox1[:3], bbox2[:3])
+    intersection_max = torch.min(bbox1[3:], bbox2[3:])
+    intersection_dims = torch.clamp(intersection_max - intersection_min, min=0)
 
-    intersection_volume = np.prod(intersection_dims)
+    intersection_volume = torch.prod(intersection_dims)
 
-    volume1 = np.prod(bbox1[3:] - bbox1[:3])
-    volume2 = np.prod(bbox2[3:] - bbox2[:3])
+    volume1 = torch.prod(bbox1[3:] - bbox1[:3])
+    volume2 = torch.prod(bbox2[3:] - bbox2[:3])
     union_volume = volume1 + volume2 - intersection_volume
 
     iou = intersection_volume / union_volume if union_volume > 0 else 0
     return iou
 
-
 def distance(cord1, cord2):
-    return ((cord1 - cord2)**2).sum()
+    return torch.sum((cord1 - cord2)**2)
 
 def DIoU(cord1, shape1, cord2, shape2):
-    bbox1 = np.array([*cord1-shape1/2, *cord1+shape1/2])
-    bbox2 = np.array([*cord2-shape2/2, *cord2+shape2/2])
+    bbox1_min = cord1 - shape1 / 2
+    bbox1_max = cord1 + shape1 / 2
+    bbox2_min = cord2 - shape2 / 2
+    bbox2_max = cord2 + shape2 / 2
+    
+    bbox1 = torch.cat((bbox1_min, bbox1_max), dim=0)
+    bbox2 = torch.cat((bbox2_min, bbox2_max), dim=0)
 
-    c1 = np.amax([bbox1,bbox2],axis=0)[3:]
-    c2 = np.amin([bbox1,bbox2],axis=0)[:3]
+    c1 = torch.max(bbox1, bbox2)[3:]
+    c2 = torch.min(bbox1, bbox2)[:3]
 
-    return IoU(bbox1, bbox2) - distance(cord1, cord2)/distance(c1, c2)
+    return IoU(bbox1, bbox2) - distance(cord1, cord2) / distance(c1, c2)

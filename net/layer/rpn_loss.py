@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.cuda.amp import autocast as autocast
 import numpy as np
-from net.layer.util import box_transform_inv
+from net.layer.util import box_transform_inv_torch
 from utils.util import DIoU
 
 
@@ -77,7 +77,7 @@ def weighted_focal_loss_with_logits_OHEM(logits, labels, weights, fg_threshold=0
     probs     = torch.sigmoid(logits)               # P   ,  y=(0,1)
     pos_idcs = (labels[:, 0] == 1) & (weights[:, 0] != 0)    # y=1
     pos_probs = probs[pos_idcs, 0]                           # P=Pt,  y=1
-
+    pos_weight = torch.where(pos_probs < 0.6, torch.tensor(4), torch.tensor(1)).cuda()
     # For those weights are zero, there are 2 cases,
     # 1. Because we first random sample num_neg negative boxes for OHEM
     # 2. Because those anchor boxes have some overlap with ground truth box,
@@ -94,7 +94,7 @@ def weighted_focal_loss_with_logits_OHEM(logits, labels, weights, fg_threshold=0
 
     # pos_probs = pos_probs.detach()
     # neg_probs = neg_probs.detach()
-    pos_weight = (alpha)* ((1-pos_probs.detach()) ** gamma)
+    pos_weight = (alpha)* ((1-pos_probs.detach()) ** gamma)* pos_weight
     neg_weight = (1-alpha)* ((neg_probs.detach()) ** gamma)
     pos_loss =  pos_weight * pos_logprobs 
     neg_loss = neg_weight * neg_logprobs 
@@ -143,7 +143,7 @@ def fOHEM(neg_output, num_hard):
     neg_output = torch.index_select(neg_output, 0, idcs)
     return neg_output
 
-def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, windows, cfg, mode='train', delta_sigma=3.0, hes='OHEM'):
+def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, cfg, mode='train', delta_sigma=3.0, hes='OHEM'):
     batch_size, num_windows, num_classes = logits.size()
     labels = labels.long()
 
@@ -180,14 +180,12 @@ def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, win
     # Calculate regression
     deltas = deltas.view(batch_size, 6)
     targets = targets.view(batch_size, 6)
-
+    # breakpoint()
     index = (labels != 0).nonzero()[:,0]
     loss_weights = np.array(cfg['box_reg_loss_weight'])
     loss_weights = loss_weights/loss_weights.sum() * len(loss_weights)
     # breakpoint()
     if len(index):
-        GT = box_transform_inv(windows[index.cpu()%len(windows)], targets.cpu().detach().numpy()[index.cpu()],cfg['box_reg_weight'])
-        pred = box_transform_inv(windows[index.cpu()%len(windows)], deltas.cpu().detach().numpy()[index.cpu()],cfg['box_reg_weight'])
         deltas  = deltas[index]
         targets = targets[index]
 
@@ -198,8 +196,12 @@ def rpn_loss(logits, deltas, labels, label_weights, targets, target_weights, win
             rpn_reg_loss += l
             reg_losses.append(l.data.item())
         rpn_reg_loss = rpn_reg_loss/6
-        for t, p in zip(GT, pred):
-            rpn_reg_loss += (1-DIoU(t[:3], t[3:], p[:3], p[3:]))
+
+        # windows = torch.from_numpy(windows).cuda()[index%len(windows)]
+        # GT   = box_transform_inv_torch(windows, targets,cfg['box_reg_weight'])
+        # pred = box_transform_inv_torch(windows, deltas, cfg['box_reg_weight'])
+        # for t, p in zip(GT, pred):
+        #     rpn_reg_loss += (1-DIoU(t[:3], t[3:], p[:3], p[3:]))
     else:
         reg_losses = torch.tensor((0.,0.,0.,0.,0.,0.)).cuda()
         rpn_reg_loss = reg_losses.mean()

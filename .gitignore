@@ -2,9 +2,14 @@ __pycache__
 annotation_generate.py
 client0_test_annotation.csv
 valid.py
-test,ipynb
+test.ipynb
+SANet_results
 MsaNet_results
 MsaNet_R_results
 SANet_L3S2_results
+SANet_ECASC_R_results
 Results_record.xlsx
+SANet_labeledonly_last_049.ckpt
+SANet_semi_last_049.ckpt
+semi_teacher.ckpt
 .gitignore

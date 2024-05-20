@@ -27,7 +27,7 @@ def add_truth_box_to_proposal(cfg, proposal, b, truth_box, truth_label, score=1)
     return sampled_proposal
 
 
-def make_one_rcnn_target(cfg, input, proposal, truth_box, truth_label):
+def make_one_rcnn_target(cfg, input_size, proposal, truth_box, truth_label):
     sampled_proposal = torch.zeros((0, 8)).float().cuda()
     sampled_label = torch.zeros((0, 1)).long().cuda()
     sampled_assign = np.zeros((0, 1), dtype=np.int32) - 1
@@ -50,7 +50,7 @@ def make_one_rcnn_target(cfg, input, proposal, truth_box, truth_label):
 
         return sampled_proposal, sampled_label, sampled_assign, sampled_target 
 
-    _, depth, height, width = input.size()
+    _, depth, height, width = input_size
     num_proposal = len(proposal)
     box = proposal[:, 2:8]
 
@@ -162,10 +162,12 @@ def make_rcnn_target(cfg, mode, inputs, proposals, truth_boxes, truth_labels):
     sampled_assigns = []
     sampled_targets = []
     # sampled_masks = []
-
+    # breakpoint()
     batch_size = len(truth_boxes_)
     for b in range(batch_size):
-        input = inputs[b]
+        if len(truth_labels_[b]) < 1:
+            continue
+        input_ = inputs[b]
         truth_box = truth_boxes_[b]
         truth_label = truth_labels_[b]
 
@@ -173,22 +175,27 @@ def make_rcnn_target(cfg, mode, inputs, proposals, truth_boxes, truth_labels):
             proposal = np.zeros((0, 8),np.float32)
         else:
             proposal = proposals[proposals[:,0] == b]
-
+        # breakpoint()
         # Add ground truth box to proposal, so that even if the RPN branch fails to find something,
         # we can still get classification branch to work
         proposal = add_truth_box_to_proposal(cfg, proposal, b, truth_box, truth_label)
 
         sampled_proposal, sampled_label, sampled_assign, sampled_target = \
-           make_one_rcnn_target(cfg, input, proposal, truth_box, truth_label)
-
-        sampled_proposals.append(sampled_proposal)
-        sampled_labels.append(sampled_label)
-        sampled_assigns.append(sampled_assign)
-        sampled_targets.append(sampled_target)
-
-    sampled_proposals = torch.cat(sampled_proposals, 0)
-    sampled_labels = torch.cat(sampled_labels, 0)
-    sampled_targets = torch.cat(sampled_targets, 0)
+           make_one_rcnn_target(cfg, input_.shape, proposal, truth_box, truth_label)
+        if len(sampled_proposal):
+            sampled_proposals.append(sampled_proposal)
+            sampled_labels.append(sampled_label)
+            sampled_assigns.append(sampled_assign)
+            sampled_targets.append(sampled_target)
+    # breakpoint()
+    if len(sampled_proposals):
+        sampled_proposals = torch.cat(sampled_proposals, 0)
+        sampled_labels = torch.cat(sampled_labels, 0)
+        sampled_targets = torch.cat(sampled_targets, 0)
+    else:
+        sampled_proposals = torch.tensor([])
+        sampled_labels = torch.tensor([])
+        sampled_targets = torch.tensor([])
     # sampled_assigns = np.hstack(sampled_assigns)
 
     return sampled_proposals, sampled_labels, sampled_assigns, sampled_targets

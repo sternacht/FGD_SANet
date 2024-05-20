@@ -52,6 +52,8 @@ def rpn_nms(cfg, mode, inputs, window, logits_flat, deltas_flat):
     batch_size, _, depth, height, width = inputs.size()
 
     proposals = []
+    keeps = np.empty(0)
+    offset = 0
     for b in range(batch_size):
 
         proposal = [np.empty((0, 8),np.float32),]
@@ -77,6 +79,8 @@ def rpn_nms(cfg, mode, inputs, window, logits_flat, deltas_flat):
             output = torch.from_numpy(output)
             output, keep = torch_nms(output, nms_overlap_threshold)
 
+            if len(keep):
+                keeps = np.append(keeps, index[keep]+offset)
             prop = np.zeros((len(output), 8),np.float32)
             prop[:, 0] = b
             prop[:, 1:8] = output
@@ -85,7 +89,7 @@ def rpn_nms(cfg, mode, inputs, window, logits_flat, deltas_flat):
 
         proposal = np.vstack(proposal)
         proposals.append(proposal)
-
+        offset += len(window)
     proposals = np.vstack(proposals)
     # Just in case if there is no proposal, we still return a Tensor,
     # torch.from_numpy() cannot take input with 0 dim
@@ -97,6 +101,36 @@ def rpn_nms(cfg, mode, inputs, window, logits_flat, deltas_flat):
         _,idx = torch.topk(proposals[:,1], 40)
         proposals = proposals[idx]
 
+    return proposals, keeps.astype(np.int32)
+
+def proposal_decoder(cfg, logits_flat, deltas_flat, keeps, window, shape):
+    logits = torch.sigmoid(logits_flat).data.cpu().numpy()
+    deltas = deltas_flat.data.cpu().numpy()
+
+    proposals = []
+    for keep in keeps:
+        b = keep//len(window)
+        idx = keep%len(window)
+        # Only those anchor boxes larger than a pre-defined threshold
+        # will be chosen for nms computation
+        p = logits[b,idx]
+        d = deltas[b,idx]
+        w = window[idx]
+        # 
+        box = rpn_decode(w[np.newaxis,:], d[np.newaxis,:], cfg['box_reg_weight'])
+        # clip oversized bboxes
+        box = clip_boxes(box, shape[2:])
+        
+        output = np.concatenate((p[np.newaxis,:], box),1)
+
+        prop = np.zeros((len(output), 8),np.float32)
+        prop[:, 0] = b
+        prop[:, 1:8] = output
+        
+        proposals.append(prop)
+        
+    proposals = np.vstack(proposals)
+    proposals = torch.from_numpy(proposals).cuda()
     return proposals
 
 def rpn_encode(window, truth_box, weight):

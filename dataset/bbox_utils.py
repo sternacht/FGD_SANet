@@ -74,7 +74,7 @@ class Augment(object):
             # at least swap on two of any dimension
             while True:
                 axisorder = np.random.permutation(3)
-                if not np.all(axisorder, np.array([0,1,2])):
+                if not np.all(axisorder == np.array([0,1,2])):
                     break
             sample = np.transpose(sample,np.concatenate([[0],axisorder+1]))
             target[:3] = target[:3][axisorder]

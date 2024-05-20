@@ -6,7 +6,7 @@ import copy
 from torch.nn.parallel.data_parallel import data_parallel
 import time
 import torch.nn.functional as F
-from utils.util import center_box_to_coord_box, ext2factor, clip_boxes, crop_size, crop_with_lobe
+from utils.util import center_box_to_coord_box, ext2factor, clip_boxes, crop_size
 from torch.nn.parallel import data_parallel
 import random
 import math
@@ -248,20 +248,21 @@ class MsaNet(nn.Module):
             
             if lobe_info is not None:
                 # crop the input with lobe and test whole cropped image
-                Ds, De, Hs, He, Ws, We = lobe_info
-                crop_input = inputs[:,:, Ds:De, Hs-He, Ws-We]
+                Ds, De, Hs, He, Ws, We = lobe_info[0]
+                crop_inputs = inputs[:,:, Ds:De, Hs:He, Ws:We]
+                # crop_inputs = inputs
+                B,C,D,H,W = crop_inputs.shape
+                # breakpoint()
+                self.rpn_windows = make_rpn_windows([1, 128, D//4, H//4, W//4], self.cfg)
+                self.rpn_window = self.rpn_windows + [Ds, Hs, Ws, 0, 0, 0]
                 with torch.no_grad():
-                    features, _ = data_parallel(self.feature_net,(crop_input))
+                    features, _ = data_parallel(self.feature_net,(crop_inputs))
                     fs = features[-1]
                     fs_shape = fs.shape
                     self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
                 b,d,h,w,a,_ = self.rpn_logits_flat.shape
                 self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1)
                 self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6)
-
-                self.rpn_windows = make_rpn_windows([1, 128, (De-Ds)//4, (He-Hs)//4, (We-Ws)//4], self.cfg)
-                self.rpn_window = self.rpn_windows + [Ds, Hs, Ws, 0, 0, 0]
-                
             else:
                 # turn input image into small block and test each of them
                 B,C,D,H,W = inputs.shape
@@ -329,7 +330,7 @@ class MsaNet(nn.Module):
 
         self.rpn_proposals = []
         if self.use_rcnn or self.mode in ['eval', 'test']:
-            self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
+            self.rpn_proposals, keeps = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                   self.rpn_logits_flat, self.rpn_deltas_flat)
 
         # breakpoint()
@@ -379,9 +380,8 @@ class MsaNet(nn.Module):
         rcnn_stats = None
         # breakpoint()
         self.rpn_cls_loss, self.rpn_reg_loss, rpn_stats = \
-           rpn_loss( self.rpn_logits_flat, self.rpn_deltas_flat, self.rpn_labels,
+            rpn_loss( self.rpn_logits_flat, self.rpn_deltas_flat, self.rpn_labels,
             self.rpn_label_weights, self.rpn_targets, self.rpn_target_weights, self.cfg, mode=self.mode, hes=self.hes)
-    
         if self.use_rcnn:
             self.rcnn_cls_loss, self.rcnn_reg_loss, rcnn_stats = \
                 rcnn_loss(self.rcnn_logits, self.rcnn_deltas, self.rcnn_labels, self.rcnn_targets)

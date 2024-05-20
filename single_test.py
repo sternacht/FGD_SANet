@@ -15,10 +15,7 @@ from tqdm import tqdm
 from torch.nn.parallel.data_parallel import data_parallel
 from scipy.ndimage import label
 from scipy.ndimage import center_of_mass
-from net.sanet import SANet
-from net.sanet_l3s2 import SANet_L3S2
-from net.MSANet import MsaNet
-from net.MSANet_reduce import MsaNet_R
+from net import *
 from dataset.collate import train_collate, test_collate, eval_collate
 from dataset.bbox_reader import BboxReader
 from single_config import datasets_info, train_config, test_config, net_config, config
@@ -137,6 +134,8 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
                     # net.forward(input, truth_bboxes, truth_labels)
                     net.forward(input, truth_bboxes, truth_labels, lobe_info=lobe_info)
                 rpns = net.rpn_proposals.cpu().numpy()
+                detections = net.detections.cpu().numpy()
+                ensembles = net.ensemble_proposals.cpu().numpy()
                 # breakpoint()
                 if len(rpns):
                     # GT size was expanded by a border to make it larger and easier to detect.
@@ -145,6 +144,14 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
                     # rpn.extend(rpns)
                     np.save(os.path.join(save_dir, f'{i}_rpns.npy'), rpns)
         
+                if len(detections):
+                    detections = detections[:, 1:] - [0,0,0,0,border, border, border]
+                    np.save(os.path.join(save_dir, f'{i}_rcnns.npy'), detections)
+
+                if len(ensembles):
+                    ensembles = ensembles[:, 1:] - [0,0,0,0,border, border, border]
+                    np.save(os.path.join(save_dir, f'{i}_ensembles.npy'), ensembles)
+
                 # Clear gpu memory
                 del input, truth_bboxes, truth_labels
                 torch.cuda.empty_cache()
@@ -163,7 +170,7 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
     # Save both rpn and rcnn results
 
     rpn_res = []
-    # rcnn_res = []
+    rcnn_res = []
     # ensemble_res = []
     for i in range(len(dataset)):
         pid = dataset.dataset.val_filenames[i]
@@ -175,13 +182,13 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
             names = np.array([[pid]]*len(rpns))
             rpn_res.append(np.concatenate([names, rpns], axis=1))
 
-        # if os.path.exists(os.path.join(save_dir, f'{i}_rcnns.npy')):
-        #     rcnns = np.load(os.path.join(save_dir, f'{i}_rcnns.npy'))
-        #     # rcnns[:, 4] = (rcnns[:, 4] + rcnns[:, 5] + rcnns[:, 6]) / 3
-        #     # rcnns = rcnns[:, [3, 2, 1, 4, 0]]
-        #     rcnns = rcnns[:, [3, 2, 1, 6, 5, 4, 0]]
-        #     names = np.array([[pid]]*len(rcnns))
-        #     rcnn_res.append(np.concatenate([names, rcnns], axis=1))
+        if os.path.exists(os.path.join(save_dir, f'{i}_rcnns.npy')):
+            rcnns = np.load(os.path.join(save_dir, f'{i}_rcnns.npy'))
+            # rcnns[:, 4] = (rcnns[:, 4] + rcnns[:, 5] + rcnns[:, 6]) / 3
+            # rcnns = rcnns[:, [3, 2, 1, 4, 0]]
+            rcnns = rcnns[:, [3, 2, 1, 6, 5, 4, 0]]
+            names = np.array([[pid]]*len(rcnns))
+            rcnn_res.append(np.concatenate([names, rcnns], axis=1))
 
         # if os.path.exists(os.path.join(save_dir, f'{i}_ensembles.npy')):
         #     ensembles = np.load(os.path.join(save_dir, f'{i}_ensembles.npy'))
@@ -192,19 +199,19 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
         #     ensemble_res.append(np.concatenate([names, ensembles], axis=1))
 
     rpn_res = np.concatenate(rpn_res, axis=0)
-    # rcnn_res = np.concatenate(rcnn_res, axis=0)
+    rcnn_res = np.concatenate(rcnn_res, axis=0)
     # ensemble_res = np.concatenate(ensemble_res, axis=0)
     col_names = ['series_id', 'x_center', 'y_center', 'z_center', 'w_mm', 'h_mm', 'd_mm', 'probability']
     eval_dir = os.path.join(save_dir, 'FROC')
     rpn_submission_path = os.path.join(eval_dir, 'submission_rpn.csv')
-    # rcnn_submission_path = os.path.join(eval_dir, 'submission_rcnn.csv')
+    rcnn_submission_path = os.path.join(eval_dir, 'submission_rcnn.csv')
     # ensemble_submission_path = os.path.join(eval_dir, 'submission_ensemble.csv')
     if not os.path.exists(rpn_submission_path):
         df = pd.DataFrame(rpn_res, columns=col_names)
         df.to_csv(rpn_submission_path, index=False)
 
-    # df = pd.DataFrame(rcnn_res, columns=col_names)
-    # df.to_csv(rcnn_submission_path, index=False)
+    df = pd.DataFrame(rcnn_res, columns=col_names)
+    df.to_csv(rcnn_submission_path, index=False)
 
     # df = pd.DataFrame(ensemble_res, columns=col_names)
     # df.to_csv(ensemble_submission_path, index=False)
@@ -212,14 +219,14 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
     # Start evaluating
     if not os.path.exists(os.path.join(eval_dir, 'rpn')):
         os.makedirs(os.path.join(eval_dir, 'rpn'))
-    # if not os.path.exists(os.path.join(eval_dir, 'rcnn')):
-    #     os.makedirs(os.path.join(eval_dir, 'rcnn'))
+    if not os.path.exists(os.path.join(eval_dir, 'rcnn')):
+        os.makedirs(os.path.join(eval_dir, 'rcnn'))
     # if not os.path.exists(os.path.join(eval_dir, 'ensemble')):
     #     os.makedirs(os.path.join(eval_dir, 'ensemble'))
 
     out = noduleCADEvaluation(annotation_dir, data_dir, dataset.dataset.set_name, rpn_submission_path, os.path.join(eval_dir, 'rpn'))
 
-    # noduleCADEvaluation(annotation_dir, data_dir, dataset.dataset.set_name, rcnn_submission_path, os.path.join(eval_dir, 'rcnn'))
+    noduleCADEvaluation(annotation_dir, data_dir, dataset.dataset.set_name, rcnn_submission_path, os.path.join(eval_dir, 'rcnn'))
     #
     # noduleCADEvaluation(annotation_dir, data_dir, dataset.dataset.set_name, ensemble_submission_path,
     #                     os.path.join(eval_dir, 'ensemble'))

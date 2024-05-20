@@ -8,7 +8,7 @@ from collections import OrderedDict
 class SpatialCGNL(nn.Module):
     """Spatial CGNL block with dot production kernel for image classfication.
     """
-    def __init__(self, inplanes, planes, use_scale=False, groups=None):
+    def __init__(self, inplanes, planes, use_scale=True, groups=None):
         self.use_scale = use_scale
         self.groups = groups
 
@@ -23,14 +23,19 @@ class SpatialCGNL(nn.Module):
         self.z = nn.Conv3d(planes, inplanes, kernel_size=1, stride=1,
                                                   groups=self.groups, bias=False)
         self.gn = nn.GroupNorm(num_groups=self.groups, num_channels=inplanes)
-
-        # if self.use_scale:
-        #     cprint("=> WARN: SpatialCGNL block uses 'SCALE'", \
-        #            'yellow')
-        # if self.groups:
-        #     cprint("=> WARN: SpatialCGNL block uses '{}' groups".format(self.groups), \
-        #            'yellow')
-
+        
+        if self.use_scale:
+            cprint("=> WARN: SpatialCGNL block uses 'SCALE'", \
+                   'yellow')
+        if self.groups:
+            cprint("=> WARN: SpatialCGNL block uses '{}' groups".format(self.groups), \
+                   'yellow')
+        for m in self.modules():
+            if isinstance(m, nn.Conv3d):
+                nn.init.kaiming_normal_(m.weight,
+                                        mode='fan_out',
+                                        nonlinearity='relu')
+                
     def kernel(self, t, p, g, b, c, zs, h, w):
         """The linear kernel (dot production).
 
@@ -46,48 +51,49 @@ class SpatialCGNL(nn.Module):
         t = t.contiguous().view(b, 1, c * zs * h * w)
         p = p.contiguous().view(b, 1, c * zs * h * w)
         g = g.contiguous().view(b, c * zs * h * w, 1)
-
+        
         att = torch.bmm(p, g)
 
         if self.use_scale:
+            temp = (c*zs*h*w)**0.5
             att = att.div((c*zs*h*w)**0.5)
-
         x = torch.bmm(att, t)
         x = x.view(b, c, zs, h, w)
 
         return x
-
+    
     def forward(self, x):
-        residual = x
+        with torch.autocast(device_type='cuda', dtype=torch.float32):
+            residual = x
+            t = self.t(x)
+            p = self.p(x)
+            g = self.g(x)
 
-        t = self.t(x)
-        p = self.p(x)
-        g = self.g(x)
+            b, c, zs, h, w = t.size()
 
-        b, c, zs, h, w = t.size()
+            if self.groups and self.groups > 1:
+                _c = int(zs / self.groups)
 
-        if self.groups and self.groups > 1:
-            _c = int(zs / self.groups)
+                ts = torch.split(t, split_size_or_sections=_c, dim=2)
+                ps = torch.split(p, split_size_or_sections=_c, dim=2)
+                gs = torch.split(g, split_size_or_sections=_c, dim=2)
 
-            ts = torch.split(t, split_size_or_sections=_c, dim=2)
-            ps = torch.split(p, split_size_or_sections=_c, dim=2)
-            gs = torch.split(g, split_size_or_sections=_c, dim=2)
+                _t_sequences = []
+                for i in range(self.groups):
+                    _x = self.kernel(ts[i], ps[i], gs[i],
+                                    b, c, _c, h, w)
+                    _t_sequences.append(_x)
 
-            _t_sequences = []
-            for i in range(self.groups):
-                _x = self.kernel(ts[i], ps[i], gs[i],
-                                 b, c, _c, h, w)
-                _t_sequences.append(_x)
+                x = torch.cat(_t_sequences, dim=2)
+            else:
+                
+                x = self.kernel(t, p, g,
+                                b, c, zs, h, w)
 
-            x = torch.cat(_t_sequences, dim=2)
-        else:
-            x = self.kernel(t, p, g,
-                            b, c, zs, h, w)
-
-        x = self.z(x)
-        x = self.gn(x) + residual
-
-        return x
+            x = self.z(x)
+            x = self.gn(x) + residual
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            return x
 
 
 class SpatialCGNLx(nn.Module):

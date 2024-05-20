@@ -548,7 +548,7 @@ class SANet_L3S2(nn.Module):
 
         self.rpn_proposals = []
         if self.use_rcnn or self.mode in ['eval', 'test']:
-            self.rpn_proposals = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
+            self.rpn_proposals, keeps = rpn_nms(self.cfg, self.mode, inputs, self.rpn_window,
                 self.rpn_logits_flat, self.rpn_deltas_flat)
 
         if self.mode in ['train', 'valid']:
