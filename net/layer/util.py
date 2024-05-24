@@ -128,7 +128,7 @@ def clip_boxes(boxes, img_size):
 
     return boxes
 
-def proposal_jittering(proposals, gamma=0.2):
+def proposal_jittering(proposals, gamma=0.2, times=3):
     '''
     random jitter proposals
     gamma: jittering ratio, 0.5>gamma>=0
@@ -137,7 +137,7 @@ def proposal_jittering(proposals, gamma=0.2):
     jittered_proposals = []
     for proposal in proposals:
         jittered_proposals.append(proposal)
-        r = np.random.rand(3,6)
+        r = np.random.rand(times,6)
         r[:,:3] = r[:,:3]* (2*gamma) - gamma
         r[:,3:] = r[:,3:]* (4*gamma) + (1-2*gamma) 
         for i in range(3):

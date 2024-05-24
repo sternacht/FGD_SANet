@@ -24,12 +24,12 @@ class SpatialCGNL(nn.Module):
                                                   groups=self.groups, bias=False)
         self.gn = nn.GroupNorm(num_groups=self.groups, num_channels=inplanes)
         
-        if self.use_scale:
-            cprint("=> WARN: SpatialCGNL block uses 'SCALE'", \
-                   'yellow')
-        if self.groups:
-            cprint("=> WARN: SpatialCGNL block uses '{}' groups".format(self.groups), \
-                   'yellow')
+        # if self.use_scale:
+        #     cprint("=> WARN: SpatialCGNL block uses 'SCALE'", \
+        #            'yellow')
+        # if self.groups:
+        #     cprint("=> WARN: SpatialCGNL block uses '{}' groups".format(self.groups), \
+        #            'yellow')
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
                 nn.init.kaiming_normal_(m.weight,

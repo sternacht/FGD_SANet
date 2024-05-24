@@ -15,8 +15,8 @@ def pad2factor(image, factor=32, pad_value=170):
     pad.append([0, d - depth])
     pad.append([0, h - height])
     pad.append([0, w - width])
-
-    image = np.pad(image, pad, 'constant', constant_values=pad_value)
+    if np.array(pad).sum() >0:
+        image = np.pad(image, pad, 'constant', constant_values=pad_value)
 
     return image
 

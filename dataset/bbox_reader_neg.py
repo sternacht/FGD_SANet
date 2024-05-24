@@ -132,26 +132,6 @@ class BboxReader_Neg(Dataset):
                 pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
                 label = np.ones(len(pos_bbox), dtype=np.int32)
                 samples.append([torch.from_numpy(sample), pos_bbox, label])
-            # samples = []
-            # if len(bboxes) == 1:
-            #     for i in range(2):
-            #         sample, target, pos_bbox, coord = self.crop(imgs, pos, bboxes, isScale=False, isRand=False)
-            #         sample, target, pos_bbox = augment(sample, target, pos_bbox, do_flip=self.augtype['flip'],
-            #                                     do_rotate=self.augtype['rotate'], do_swap=self.augtype['swap'])
-            #         sample = sample.astype(np.float32)
-            #         pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
-            #         label = np.ones(len(pos_bbox), dtype=np.int32)
-            #         samples.append([torch.from_numpy(sample), pos_bbox, label])
-            # else:
-            #     pos_bboxes = bboxes[np.random.choice(len(bboxes), min(len(bboxes),2), replace=False)]
-            #     for pos in pos_bboxes:
-            #         sample, target, pos_bbox, coord = self.crop(imgs, pos, bboxes, isScale=False, isRand=False)
-            #         sample, target, pos_bbox = augment(sample, target, pos_bbox, do_flip=self.augtype['flip'],
-            #                                     do_rotate=self.augtype['rotate'], do_swap=self.augtype['swap'])
-            #         sample = sample.astype(np.float32)
-            #         pos_bbox = fillter_box(pos_bbox, self.cfg['crop_size'])
-            #         label = np.ones(len(pos_bbox), dtype=np.int32)
-            #         samples.append([torch.from_numpy(sample), pos_bbox, label])
 
             # neg_bboxes = [pick_rand_neg(bboxes, lobe_info)]
             for neg in neg_bboxes:

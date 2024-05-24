@@ -3,7 +3,8 @@ from net.lib.box.overlap.cython_box_overlap import cython_box_overlap
 from net.lib.box.nms.torch_nms import torch_nms
 from net.lib.box.nms.gpu_nms import gpu_nms
 from net.lib.box.nms.cython_nms import cython_nms
-
+import torch
+import numpy as np
 #from model.lib.box.nms.py_nms import py_nms
 #
 
@@ -336,6 +337,7 @@ def run_check_nms():
 
 # # main #################################################################
 if __name__ == '__main__':
+    import os
     print( '%s: calling main function ... ' % os.path.basename(__file__))
 
     run_check_nms()

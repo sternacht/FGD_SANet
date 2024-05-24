@@ -80,7 +80,6 @@ def main():
     batch_size = args.batch_size
     train_set_list = args.train_set_list
     val_set_list = args.val_set_list
-    lr_schdule = train_config['lr_schedule']
     data_dir = args.data_dir
     label_type = config['label_types']
     augtype = config['augtype']
@@ -106,8 +105,8 @@ def main():
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay, momentum=momentum)
     else:
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
-    # lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 45, 90, 100], gamma=0.1)
-    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=train_config['init_lr']/100)
+    lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[90], gamma=0.01)
+    # lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=train_config['init_lr']/100)
     
     # def warmup_fn(epoch, warmup_epochs=10):
     #     if epoch < warmup_epochs:

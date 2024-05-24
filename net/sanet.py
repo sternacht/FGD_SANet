@@ -358,129 +358,42 @@ class SANet(nn.Module):
         # self.rpn_loss = Loss(cfg['num_hard'])
         
 
-    def forward(self, inputs, truth_boxes, truth_labels, split_combiner=None, nzhw=None, lobe_info=None):
-        # features, feat_4 = self.feature_net(inputs)
-        # breakpoint()
+    def forward(self, inputs, truth_boxes, truth_labels, lobe_info=None):
         if self.mode == 'train':
             # breakpoint()
             self.features, feat_4 = data_parallel(self.feature_net, (inputs))
             fs = self.features[-1]
-            fs_shape = fs.shape
             self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
 
             b,D,H,W,_,num_class = self.rpn_logits_flat.shape
 
             self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1)
             self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6)
-            self.rpn_window = make_rpn_windows(fs_shape, self.cfg)
-
-            # if self.cfg['FGD'] and self.mode == 'train':
-
-            #     with torch.no_grad():
-            #         t_features, t_feat_4 = data_parallel(self.teacher_net.feature_net, (inputs))
-            #         t_fs = t_features[-1]
-
-            #     self.attention_loss, self.fg_loss, self.bg_loss = FGD_loss(t_fs, fs, truth_boxes)
+            self.rpn_window = make_rpn_windows(fs.shape, self.cfg)
             return
+        
         elif self.mode == 'valid':
             self.features, feat_4 = data_parallel(self.feature_net, (inputs))
             fs = self.features[-1]
-            fs_shape = fs.shape
-            self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
-
-            b,D,H,W,_,num_class = self.rpn_logits_flat.shape
-
-            self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1)
-            self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6)
-            self.rpn_window = make_rpn_windows(fs_shape, self.cfg)
+            self.rpn_window = make_rpn_windows(fs.shape, self.cfg)
 
         elif self.mode == 'eval':
+            Ds, De, Hs, He, Ws, We = lobe_info[0]
+            crop_inputs = inputs[:,:, Ds:De, Hs:He, Ws:We]
+            # crop_inputs = inputs
+            D,H,W = crop_inputs.shape[-3:]
             # breakpoint()
-            if lobe_info is not None:
-                # crop the input with lobe and test whole cropped image
-                Ds, De, Hs, He, Ws, We = lobe_info[0]
-                crop_inputs = inputs[:,:, Ds:De, Hs:He, Ws:We]
-                # crop_inputs = inputs
-                B,C,D,H,W = crop_inputs.shape
-                # breakpoint()
-                self.rpn_windows = make_rpn_windows([1, 128, D//4, H//4, W//4], self.cfg)
-                self.rpn_window = self.rpn_windows + [Ds, Hs, Ws, 0, 0, 0]
-                with torch.no_grad():
-                    self.features, _ = data_parallel(self.feature_net,(crop_inputs))
-                    fs = self.features[-1]
-                    fs_shape = fs.shape
-                    self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
-                b,d,h,w,a,_ = self.rpn_logits_flat.shape
-                self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1)
-                self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6)
+            self.features, _ = data_parallel(self.feature_net, (crop_inputs))
+            fs = self.features[-1]
+            rpn_windows = make_rpn_windows(fs.shape, self.cfg)
+            self.rpn_window = rpn_windows + [Ds, Hs, Ws, 0, 0, 0]
 
-            else:
-                # turn input image into small block and test each of them
-                import math
-                import warnings
-                from utils.util import crop_size
-                B,C,D,H,W = inputs.shape
-                self.rpn_logits_flat = torch.tensor([]).cuda()
-                self.rpn_deltas_flat = torch.tensor([]).cuda()
-                self.rpn_window = np.empty((0,6))
-                last_crop = 0
-                # B, C, D, H, W = 1, 128, 32, 128, 128
-                rpn_windows = make_rpn_windows([1, 128, 32, 128, 128], self.cfg)
+        self.rpn_logits_flat, self.rpn_deltas_flat = data_parallel(self.rpn, fs)
+        b,d,h,w,a,_ = self.rpn_logits_flat.shape
 
-                for i in range(math.ceil(D/64)-1):
-                    hw_block = 1 
-                    block_size = 512
-                    hw_stride = 512-(block_size*hw_block - 512)/(hw_block-1) if hw_block > 1 else 0
-                    if not isinstance(hw_stride, int):
-                        warnings.warn(f'hw_stride should be int')
-                        hw_stride = int(hw_stride)
-                    if hw_stride not in crop_size.keys():
-                        raise ValueError(f'hw_block:{hw_block} and block_size:{block_size} not set')
-                    for hw in range(hw_block**2):
-                        h_idx = hw%hw_block
-                        w_idx = hw//hw_block
-                        crop_h = crop_size[hw_stride][h_idx]
-                        crop_w = crop_size[hw_stride][w_idx]
-                        # breakpoint()
-                        if i*64+128 >= D:
-                            crop_input = inputs[:,:,-128:, h_idx*hw_stride:h_idx*hw_stride+block_size, w_idx*hw_stride:w_idx*hw_stride+block_size]
-                            overlap_slice = (D-(i*64))//4
-                            last_crop = 1
-                            start_slice = D-128
-                        else:
-                            crop_input = inputs[:,:,i*64: i*64+128, h_idx*hw_stride:h_idx*hw_stride+block_size, w_idx*hw_stride:w_idx*hw_stride+block_size]
-                            overlap_slice = 16
-                            start_slice = i*64
-                        with torch.no_grad():
-                            self.features, _ = data_parallel(self.feature_net,(crop_input))
-                            fs = self.features[-1]
-                            fs_shape = fs.shape
-                            crop_rpn_logits_flat, crop_rpn_deltas_flat = data_parallel(self.rpn, fs)
+        self.rpn_logits_flat = self.rpn_logits_flat.view(b, -1, 1)
+        self.rpn_deltas_flat = self.rpn_deltas_flat.view(b, -1, 6)
 
-                        b,d,h,w,a,_ = crop_rpn_logits_flat.shape
-
-                        crop_rpn_window = rpn_windows.copy() + [start_slice, h_idx*hw_stride, w_idx*hw_stride, 0, 0, 0]
-
-                        if i == 0:
-                            crop_rpn_logits_flat = crop_rpn_logits_flat[:,:24,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                            crop_rpn_deltas_flat = crop_rpn_deltas_flat[:,:24,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                            crop_rpn_window = crop_rpn_window.reshape(d, h, w, -1, 6)[:24,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                        elif last_crop == 1:
-                            crop_rpn_logits_flat = crop_rpn_logits_flat[:,overlap_slice//2:,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                            crop_rpn_deltas_flat = crop_rpn_deltas_flat[:,overlap_slice//2:,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                            crop_rpn_window = crop_rpn_window.reshape(d, h, w, -1, 6)[overlap_slice//2:,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                        else:
-                            crop_rpn_logits_flat = crop_rpn_logits_flat[:,8:24,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                            crop_rpn_deltas_flat = crop_rpn_deltas_flat[:,8:24,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-                            crop_rpn_window = crop_rpn_window.reshape(d, h, w, -1, 6)[8:24,crop_h[0]:crop_h[1],crop_w[0]:crop_w[1]]
-
-                        crop_rpn_logits_flat = crop_rpn_logits_flat.contiguous().view(b, -1, 1)
-                        crop_rpn_deltas_flat = crop_rpn_deltas_flat.contiguous().view(b, -1, 6)
-                        crop_rpn_window = crop_rpn_window.reshape(-1, 6)
-
-                        self.rpn_logits_flat = torch.cat((self.rpn_logits_flat, crop_rpn_logits_flat), dim=1)
-                        self.rpn_deltas_flat = torch.cat((self.rpn_deltas_flat, crop_rpn_deltas_flat), dim=1)
-                        self.rpn_window = np.concatenate((self.rpn_window, crop_rpn_window), axis=0)
 
         self.rpn_proposals = []
         if self.use_rcnn or self.mode in ['eval', 'test']:
@@ -506,6 +419,8 @@ class SANet(nn.Module):
         if self.use_rcnn:
             if len(self.rpn_proposals) > 0:
                 proposal = self.rpn_proposals[:, [0, 2, 3, 4, 5, 6, 7]].cpu().numpy().copy()
+                if self.mode=='eval':
+                    proposal = proposal - [0,Ds,Hs,Ws,0,0,0]
                 proposal[:, 1:] = center_box_to_coord_box(proposal[:, 1:])
                 proposal = proposal.astype(np.int64)
                 proposal[:, 1:] = ext2factor(proposal[:, 1:], 4)

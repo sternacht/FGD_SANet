@@ -24,6 +24,7 @@ from utils.util import onehot2multi_mask, normalize, pad2factor, load_dicom_imag
     npy2submission
 import pandas as pd
 from evaluationScript.uni_noduleCADEvaluation import noduleCADEvaluation
+from torch.cuda.amp import autocast
 
 
 plt.rcParams['figure.figsize'] = (24, 16)
@@ -86,7 +87,7 @@ def main():
         # else:
         #     dataset = LUNA16BboxReader(data_dir, test_name, augtype, config, mode='eval')
         test_loader = DataLoader(dataset, batch_size=1, shuffle=False,
-                              num_workers=num_workers, pin_memory=False, collate_fn=train_collate)
+                              num_workers=num_workers, pin_memory=True, collate_fn=train_collate)
         # breakpoint()
         print('out_dir', out_dir)
         save_dir = os.path.join(out_dir, 'res', str(epoch)+'')
@@ -113,10 +114,13 @@ def main():
 
 def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create_data=True):
     net.set_mode('eval')
-    # net.use_rcnn = True
+    net.use_rcnn = True
     # aps = []
     # dices = []
-
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
     print('Total # of eval data %d' % (len(dataset)))
     if create_data:
         print(f'Creating prediction...')
@@ -126,12 +130,11 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
         # for i, (input, truth_bboxes, truth_labels) in tqdm(enumerate(dataset), total=len(dataset), desc='eval'):
         for i, (input, truth_bboxes, truth_labels, lobe_info) in tqdm(enumerate(dataset), total=len(dataset), desc='eval'):
             try:
-                input = input.cuda()
+                input = input.to(device, non_blocking=True)
                 truth_bboxes = np.array(truth_bboxes)
                 truth_labels = np.array(truth_labels)
         
-                with torch.no_grad():
-                    # net.forward(input, truth_bboxes, truth_labels)
+                with torch.no_grad(), autocast():
                     net.forward(input, truth_bboxes, truth_labels, lobe_info=lobe_info)
                 rpns = net.rpn_proposals.cpu().numpy()
                 detections = net.detections.cpu().numpy()
@@ -143,13 +146,13 @@ def eval(net, dataset, annotation_dir, data_dir, save_dir=None, border=0, create
                     rpns = rpns[:, 1:] - [0,0,0,0,border, border, border]
                     # rpn.extend(rpns)
                     np.save(os.path.join(save_dir, f'{i}_rpns.npy'), rpns)
-        
+                # breakpoint()
                 if len(detections):
-                    detections = detections[:, 1:] - [0,0,0,0,border, border, border]
+                    detections = detections[:, 1:8] - [0,0,0,0,border, border, border]
                     np.save(os.path.join(save_dir, f'{i}_rcnns.npy'), detections)
 
                 if len(ensembles):
-                    ensembles = ensembles[:, 1:] - [0,0,0,0,border, border, border]
+                    ensembles = ensembles[:, 1:8] - [0,0,0,0,border, border, border]
                     np.save(os.path.join(save_dir, f'{i}_ensembles.npy'), ensembles)
 
                 # Clear gpu memory

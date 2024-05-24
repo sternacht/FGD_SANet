@@ -7,13 +7,14 @@ import torch
 from torch.utils.data import Dataset
 from scipy.ndimage import zoom
 from scipy.ndimage.interpolation import rotate
-from utils.util import crop_with_lobe, get_series
+from utils.util import crop_with_lobe, get_series, Timer
 from dataset.bbox_utils import Crop, Augment, pad2factor, fillter_box
 #import SimpleITK as sitk
 # import nrrd
 import warnings
 import json
 import matplotlib.pyplot as plt
+from torch.cuda.amp import autocast
 
 class BboxReader_unlabeled(Dataset):
     def __init__(self, data_dir, set_name, augtype, cfg, mode='train'):
@@ -29,7 +30,6 @@ class BboxReader_unlabeled(Dataset):
         self.clip_min = cfg['clip_min']
         self.clip_max = cfg['clip_max']
         self.clip_half = (self.clip_max - self.clip_min)/2
-        labels = []
         self.eval_crop = []
         if set_name.endswith('.csv'):
             self.filenames = np.genfromtxt(set_name, dtype=str)
@@ -39,16 +39,16 @@ class BboxReader_unlabeled(Dataset):
             with open(self.set_name, "r") as f:
                 self.filenames = f.read().splitlines()[1:]
 
-        self.sample_bboxes = []
-        for num, fns in enumerate(self.filenames):
-            fn = fns.split(',')
-            with open(os.path.join(fn[0], 'npy', 'lobe_info.txt'), 'r') as f:
-                lobe_info = f.readlines()[-2:]
-            Ds, De, Hs, He, Ws, We = crop_with_lobe(*lobe_info, align=1)
-            patch_series = get_series(Ds, De, Hs, He, Ws, We)
+        # self.sample_bboxes = []
+        # for num, fns in enumerate(self.filenames):
+        #     fn = fns.split(',')
+        #     with open(os.path.join(fn[0], 'npy', 'lobe_info.txt'), 'r') as f:
+        #         lobe_info = f.readlines()[-2:]
+        #     Ds, De, Hs, He, Ws, We = crop_with_lobe(*lobe_info, align=1)
+        #     patch_series = get_series(Ds, De, Hs, He, Ws, We)
 
-            for patch in patch_series:
-                self.sample_bboxes.append([num, patch])
+        #     for patch in patch_series:
+        #         self.sample_bboxes.append([num, patch])
 
         self.crop = Crop(cfg)
         self.augment = Augment(cfg)
@@ -73,7 +73,13 @@ class BboxReader_unlabeled(Dataset):
             filenum, patch = self.sample_bboxes[idx].copy()              # positive bbox
             filename = self.filenames[filenum]
             imgs, lobe_info = self.load_img(filename,align=1)   # loading images
-            sample = imgs[:, patch[0]:patch[0]+128, patch[1]:patch[1]+128, patch[2]:patch[2]+128]
+            imgs = pad2factor(imgs[0], factor=16, pad_value=0.67142)
+            imgs = np.expand_dims(imgs, 0)
+
+            # sample = imgs[:, patch[0]:patch[0]+128, patch[1]:patch[1]+128, patch[2]:patch[2]+128]
+            sample, target, pos_bbox, coord = self.crop(imgs, patch, [patch], isScale=False, isRand=False)
+            sample, target, pos_bbox = self.augment(sample, target, pos_bbox)
+            
             bbox = np.array([np.zeros((6))])
             label = np.zeros((1), dtype=np.int16)
 
@@ -125,7 +131,6 @@ class BboxReader_unlabeled(Dataset):
             crop_img = imgs[start_slice:start_slice+128]
         return crop_img
 
-
     def load_img(self, filename, align=16, mode='train'):
         path, dir = filename.split(',')
         img = np.load(os.path.join(path, 'npy', f'{dir}.npy'))
@@ -137,18 +142,34 @@ class BboxReader_unlabeled(Dataset):
             lobe_info = f.readlines()[-2:]
 
         Ds, De, Hs, He, Ws, We = crop_with_lobe(*lobe_info, align=align)
+        img = np.clip(img.astype(np.float16), self.clip_min, self.clip_max).transpose(0, 3, 1, 2) # (1, d, h, w)
+        images = (img - (self.clip_min + self.clip_half)) / self.clip_half
 
-        img = img.astype(np.float16)
-        img = np.clip(img, self.clip_min, self.clip_max)
-        img = img.transpose(0, 3, 1, 2) # (1, d, h, w)
-        images = img - self.clip_min    # 0 ~ max
-        images = (images - self.clip_half) / self.clip_half # -1 ~ 1
-
-        # crop the lobe
+        # # crop the lobe
         if mode == 'train':
             images = images[:, Ds:De, Hs:He, Ws:We]
         return images, (Ds, De, Hs, He, Ws, We)
-    
+
+    def get_patchs_coordinate(self, net):
+        self.sample_bboxes = []
+        net.set_mode('eval')
+        net.use_rcnn=False
+        for i,filename in enumerate(self.filenames):
+            imgs, lobe_info = self.load_img(filename,align=32, mode='eval')
+            imgs = pad2factor(imgs[0], factor=32, pad_value=0.67142)
+            imgs = imgs[np.newaxis, np.newaxis, :]
+            # try:
+            with autocast(), torch.no_grad():
+                net.forward(torch.from_numpy(imgs).cuda(), None, None, lobe_info=[lobe_info])
+            # except:
+                # breakpoint()
+            proposals = net.rpn_proposals.cpu().numpy()
+            print(f'\rloading patch {i+1}/{len(self.filenames)}',end='')
+            for proposal in proposals:
+                coord = proposal[2:]
+                self.sample_bboxes.append([i, [int(c)+1 for c in coord]])
+        net.use_rcnn=True
+
     def hu_normalize(self, images):
         images = np.array(images, float)
         images = images - self.clip_min

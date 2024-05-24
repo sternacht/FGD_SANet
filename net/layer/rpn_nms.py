@@ -80,6 +80,7 @@ def rpn_nms(cfg, mode, inputs, window, logits_flat, deltas_flat):
             output, keep = torch_nms(output, nms_overlap_threshold)
 
             if len(keep):
+                # breakpoint()
                 keeps = np.append(keeps, index[keep]+offset)
             prop = np.zeros((len(output), 8),np.float32)
             prop[:, 0] = b

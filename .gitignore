@@ -12,4 +12,5 @@ Results_record.xlsx
 SANet_labeledonly_last_049.ckpt
 SANet_semi_last_049.ckpt
 semi_teacher.ckpt
+single_config.py
 .gitignore

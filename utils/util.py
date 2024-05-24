@@ -20,6 +20,7 @@ from utils.pybox import torch_overlap
 import pydicom
 import matplotlib.cm as cm
 import math
+import time
 from skimage import measure
 from scipy.ndimage import zoom
 from scipy.sparse import csr_matrix
@@ -647,3 +648,16 @@ def DIoU(cord1, shape1, cord2, shape2):
     c2 = torch.min(bbox1, bbox2)[:3]
 
     return IoU(bbox1, bbox2) - distance(cord1, cord2) / distance(c1, c2)
+
+class Timer:
+    def __init__(self, title=''):
+        self.title = title
+
+    def __enter__(self):
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.end = time.time()
+        self.interval = self.end - self.start
+        print(f"In {self.title}, Elapsed time: {self.interval:.4f} seconds")

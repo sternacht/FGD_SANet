@@ -10,7 +10,7 @@ from dataset.bbox_reader_neg import BboxReader_Neg
 from dataset.bbox_reader_neg_nodulebased import BboxReader_NegNB
 from dataset.bbox_reader_unlabeled import BboxReader_unlabeled
 from utils.util import Logger
-from single_config import train_config, datasets_info, net_config, config
+from single_config import *
 import pprint
 import torch.optim as optim
 from torch.utils.data import DataLoader, ConcatDataset
@@ -88,23 +88,12 @@ def main():
     batch_size = args.batch_size
     train_set_list = args.train_set_list
     val_set_list = args.val_set_list
-    lr_schdule = train_config['lr_schedule']
+    # lr_schdule = train_config['lr_schedule']
     data_dir = args.data_dir
     label_type = config['label_types']
     augtype = config['augtype']
     batchsize_scale = args.batchsize_scale
-    if label_type == 'bbox':
-        unlabeled_train_dataset = BboxReader_unlabeled(data_dir, train_set_list, augtype, config, mode='train')
-        labeled_train_dataset = BboxReader_NegNB(data_dir, train_set_list, augtype, config, mode='train')
-        val_dataset = BboxReader(data_dir, val_set_list, augtype, config, mode='val')
-
-    unlabeled_train_loader = DataLoader(unlabeled_train_dataset, batch_size=batch_size, shuffle=True,
-                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
-    labeled_train_loader = DataLoader(labeled_train_dataset, batch_size=batch_size, shuffle=True,
-                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False,
-                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate)
-    
+    ul_train_set = args.ul_train_set_list
     
     # Initilize network
     net = getattr(this_module, net)(config, hes=train_config['hard_example_solution'])
@@ -118,7 +107,7 @@ def main():
     else:
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
     # lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 45, 90, 100], gamma=0.1)
-    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=1, eta_min=train_config['init_lr']/100)
+    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=train_config['init_lr']/100)
     
     # def warmup_fn(epoch, warmup_epochs=10):
     #     if epoch < warmup_epochs:
@@ -136,8 +125,8 @@ def main():
     if initial_checkpoint:
         print('[Loading model from %s]' % initial_checkpoint)
         checkpoint = torch.load(initial_checkpoint)
-        if not ('model.ckpt' in initial_checkpoint):
-            start_epoch = checkpoint['epoch']
+        # if not ('model.ckpt' in initial_checkpoint):
+            # start_epoch = checkpoint['epoch']
 
         state = net.state_dict()
         state.update(checkpoint['state_dict'])
@@ -157,8 +146,20 @@ def main():
     teacher_net = SANet(config, mode='train')
     teacher_net.load_state_dict(torch.load(config['teacher'])['state_dict'])
     teacher_net = teacher_net.cuda()
-    teacher_net.eval() 
+    teacher_net.eval()
 
+    if label_type == 'bbox':
+        unlabeled_train_dataset = BboxReader_unlabeled(data_dir, ul_train_set, augtype, config, mode='train')
+        labeled_train_dataset = BboxReader_NegNB(data_dir, train_set_list, augtype, config, mode='train')
+        val_dataset = BboxReader(data_dir, val_set_list, augtype, config, mode='val')
+    unlabeled_train_dataset.get_patchs_coordinate(teacher_net)
+    unlabeled_train_loader = DataLoader(unlabeled_train_dataset, batch_size=batch_size, shuffle=True,
+                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
+    labeled_train_loader = DataLoader(labeled_train_dataset, batch_size=batch_size, shuffle=True,
+                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False,
+                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate)
+    
     start_epoch = start_epoch + 1
 
     model_out_dir = os.path.join(out_dir, 'model')
@@ -183,7 +184,7 @@ def main():
     train_writer = SummaryWriter(os.path.join(tb_out_dir, 'train'))
     val_writer = SummaryWriter(os.path.join(tb_out_dir, 'val'))
     # writer.add_graph(net, (torch.zeros((16, 1, 128, 128, 128)).cuda(), [[]], [[]], [[]], [torch.zeros((16, 128, 128, 128))]), verbose=False)
-
+    reload_path_count = 1
     for i in range(start_epoch, epochs + 1):
         # learning rate schedule
         lr = train_config['init_lr']
@@ -196,7 +197,7 @@ def main():
 
         print('[epoch %d/%d, lr %f, use_rcnn: %r]' % (i, epochs, optimizer.param_groups[0]['lr'], net.use_rcnn))
         train(net, teacher_net, unlabeled_train_loader, labeled_train_loader, optimizer, i, 
-              train_writer, (val_loader, val_writer), scaler=scaler, batchsize_scale=batchsize_scale)
+              train_writer, scaler=scaler, batchsize_scale=batchsize_scale)
         lr_schduler.step()
 
         state_dict = net.state_dict()
@@ -206,7 +207,7 @@ def main():
 
         # breakpoint()
         if i % epoch_save == 0 and i>0:
-            # validate(net, val_loader, i, val_writer)
+            validate(net, val_loader, i, val_writer)
             torch.save({
                 'epoch': i,
                 'out_dir': out_dir,
@@ -219,14 +220,23 @@ def main():
                 'state_dict': state_dict,
                 'optimizer' : optimizer.state_dict()},
                 os.path.join(model_out_dir, 'last.ckpt'))
+        
+        for param1, param2 in zip(teacher_net.parameters(), net.parameters()):
+            param1.data = 0.999*param1.data + 0.001*param2.data
 
+        if (reload_path_count)%20 == 0:
+            unlabeled_train_dataset.get_patchs_coordinate(teacher_net)
+            unlabeled_train_loader = DataLoader(unlabeled_train_dataset, batch_size=batch_size, shuffle=True,
+                            num_workers=args.num_workers, pin_memory=True, collate_fn=train_collate, drop_last=True)
+        reload_path_count += 1
     writer.close()
     train_writer.close()
     val_writer.close()
 
 
-def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, writer, val_thing, scaler=None, batchsize_scale=1):
+def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, writer, scaler=None, batchsize_scale=1):
     net.set_mode('train')
+    teacher.set_mode('train')
     s = time.time()
     rpn_cls_losses, rpn_reg_losses = [], []
     rcnn_cls_losses, rcnn_reg_losses = [], []
@@ -248,46 +258,52 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
             truth_box = np.array(truth_box)
             truth_label = np.array(truth_label)
 
-            semi_cls_loss = torch.zeros(1).cuda()
-            semi_reg_loss = torch.zeros(1).cuda()
+            semi_cls_loss = torch.zeros(1).to(device)
+            semi_reg_loss = torch.zeros(1).to(device)
 
             with autocast():
                 inputs = inputs.to(device, non_blocking=True)
                 with torch.no_grad():
                     teacher(inputs, truth_box, truth_label)
+                # breakpoint()
                 t_rpn_proposals, keeps = rpn_nms(config, 'train', inputs, 
                                                  teacher.rpn_window,
                                                  teacher.rpn_logits_flat,
                                                  teacher.rpn_deltas_flat)
                 t_rpn_proposals = t_rpn_proposals.detach()
                 if len(keeps):
-                    # s_rpn_proposals = proposal_decoder(config, 
-                    #                                net.rpn_logits_flat,
-                    #                                net.rpn_deltas_flat,
-                    #                                keeps, 
-                    #                                net.rpn_window, 
-                    #                                inputs.shape)
-                    cls_idx = torch.where(t_rpn_proposals[:,1] >= 0.5)
-                    reg_idx = torch.where(t_rpn_proposals[:,1] >= 0.5)
+                    # cls_idx = torch.where(t_rpn_proposals[:,1] >= 0.5)
+                    # reg_idx = torch.where(t_rpn_proposals[:,1] >= 0.5)
+                    rcnn_cand_idx = torch.where(t_rpn_proposals[:,1] >= 0.5)
                     
                     t_features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in teacher.features]
-                    # s_features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in net.features]
 
-                    if len(cls_idx[0]):
-                        t_cls_proposal = proposal_preprocess(t_rpn_proposals[cls_idx].cpu().numpy(), inputs.shape)
-                        with torch.no_grad():
-                            t_cls_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_cls_proposal).cuda()))
-                            t_cls_rcnn_logits, _ = data_parallel(teacher.rcnn_head, t_cls_rcnn_crops)
+                    # if len(cls_idx[0]):
+                    #     t_cls_proposal = proposal_preprocess(t_rpn_proposals[cls_idx].cpu().numpy(), inputs.shape)
+                    #     with torch.no_grad():
+                    #         t_cls_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_cls_proposal).cuda()))
+                    #         t_cls_rcnn_logits, _ = data_parallel(teacher.rcnn_head, t_cls_rcnn_crops)
 
-                    if len(reg_idx[0]):
-                        t_reg_proposal_candidate = proposal_jittering(t_rpn_proposals[reg_idx].cpu().numpy(), gamma=0.3)
-                        t_reg_proposal = proposal_preprocess(t_reg_proposal_candidate, inputs.shape)
+                    # if len(reg_idx[0]):
+                    #     t_reg_proposal_candidate = proposal_jittering(t_rpn_proposals[reg_idx].cpu().numpy(), gamma=0.3)
+                    #     t_reg_proposal = proposal_preprocess(t_reg_proposal_candidate, inputs.shape)
+                    #     with torch.no_grad():
+                    #         t_reg_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_reg_proposal).cuda()))
+                    #         _, t_reg_rcnn_deltas = data_parallel(teacher.rcnn_head, t_reg_rcnn_crops)
+                    #     cord_box_deltas = center_box_to_coord_box(box_transform_inv(t_reg_proposal_candidate[:,2:],
+                    #                     t_reg_rcnn_deltas.cpu().detach().numpy()[:,6:], config['box_reg_weight']))
+                    #     reg_keeps = clip_delta_variance(cord_box_deltas, t_rpn_proposals[reg_idx].cpu().numpy(), threshold=0.2)
+
+                    if len(rcnn_cand_idx[0]):
+                        t_proposal_candidate = proposal_jittering(t_rpn_proposals[rcnn_cand_idx].cpu().numpy(), gamma=0.2)
+                        t_proposal = proposal_preprocess(t_proposal_candidate, inputs.shape)
                         with torch.no_grad():
-                            t_reg_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_reg_proposal).cuda()))
-                            _, t_reg_rcnn_deltas = data_parallel(teacher.rcnn_head, t_reg_rcnn_crops)
-                        cord_box_deltas = center_box_to_coord_box(box_transform_inv(t_reg_proposal_candidate[:,2:],
+                            t_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_proposal).cuda()))
+                            t_cls_rcnn_logits, t_reg_rcnn_deltas = data_parallel(teacher.rcnn_head, t_rcnn_crops)
+                        t_cls_rcnn_logits = t_cls_rcnn_logits.reshape(len(rcnn_cand_idx[0]),4,2)[:,0,...]
+                        cord_box_deltas = center_box_to_coord_box(box_transform_inv(t_proposal_candidate[:,2:],
                                         t_reg_rcnn_deltas.cpu().detach().numpy()[:,6:], config['box_reg_weight']))
-                        reg_keeps = clip_delta_variance(cord_box_deltas, t_rpn_proposals[reg_idx].cpu().numpy(), threshold=0.2)
+                        reg_keeps = clip_delta_variance(cord_box_deltas, t_rpn_proposals[rcnn_cand_idx].cpu().numpy(), threshold=0.1)
 
                     inputs, unswapax, unflipid = strong_augment(inputs)
                     net(inputs, truth_box, truth_label)
@@ -295,6 +311,7 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                     s_features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in net.features]
                     s_rpn_logits_flat = strong_recover(net.rpn_logits_flat, unflipid, unswapax)
                     s_rpn_deltas_flat = strong_recover(net.rpn_deltas_flat, unflipid, unswapax)
+                    # breakpoint()
                     s_rpn_proposals = proposal_decoder(config, 
                                                     s_rpn_logits_flat,
                                                     s_rpn_deltas_flat,
@@ -305,8 +322,8 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                         s_proposals = proposal_preprocess(s_rpn_proposals.detach().cpu().numpy(), inputs.shape)
                         s_rcnn_crops = data_parallel(net.rcnn_crop, (s_features, inputs, torch.from_numpy(s_proposals).cuda()))
                         s_rcnn_logits, s_rcnn_deltas = data_parallel(net.rcnn_head, s_rcnn_crops)
-                        semi_cls_loss, semi_reg_loss = semi_loss(t_cls_rcnn_logits, s_rcnn_logits[cls_idx],
-                                    t_reg_rcnn_deltas[reg_keeps], s_rcnn_deltas[reg_idx][reg_keeps])
+                        semi_cls_loss, semi_reg_loss = semi_loss(t_cls_rcnn_logits, s_rcnn_logits[rcnn_cand_idx],
+                                    t_reg_rcnn_deltas[reg_keeps], s_rcnn_deltas[rcnn_cand_idx][reg_keeps])
                                 
             # then train labeled data
             try:
@@ -320,10 +337,9 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                 inputs = inputs.to(device, non_blocking=True)
                 inputs, unswapax, unflipid = strong_augment(inputs)
                 net(inputs, truth_box, truth_label)
+                # breakpoint()
                 rpn_labels, rpn_label_assigns, rpn_label_weights, rpn_targets, rpn_target_weights = make_rpn_target(config, 
                         'train', inputs, net.rpn_window, truth_box, truth_label)
-                # rpn_cls_loss, rpn_reg_loss, rpn_stat = rpn_loss(net.rpn_logits_flat, net.rpn_deltas_flat, rpn_labels,
-                #         rpn_label_weights, rpn_targets, rpn_target_weights, config, 'train', 'fOHEM')
     
                 rpn_logits_flat = strong_recover(net.rpn_logits_flat, unflipid, unswapax)
                 rpn_deltas_flat = strong_recover(net.rpn_deltas_flat, unflipid, unswapax)
@@ -340,7 +356,6 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                 proposal[:, 1:] = ext2factor(proposal[:, 1:], 4)                        # align to 4
                 proposal[:, 1:] = clip_boxes(proposal[:, 1:], inputs.shape[2:])         # clip to make boxes in range of image
                 features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in net.features]
-                # breakpoint()
                 rcnn_crops = data_parallel(net.rcnn_crop, (features, inputs, torch.from_numpy(proposal).cuda()))
                 
                 rcnn_logits, rcnn_deltas = data_parallel(net.rcnn_head, rcnn_crops)
@@ -381,13 +396,12 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
 
             rcnn_stats.append(rcnn_stat)
 
-            del inputs, truth_box, truth_label
-            # del rpn_proposals, t_cls_proposal, t_reg_proposal, s_proposals
-            del rpn_proposals
-            del loss, rcnn_cls_loss, rcnn_reg_loss, rpn_cls_loss, rpn_reg_loss, semi_cls_loss, semi_reg_loss
-            del net.rpn_logits_flat, net.rpn_deltas_flat
-            del teacher.rpn_logits_flat, teacher.rpn_deltas_flat
-            del rcnn_stat, rpn_stat
+            # del inputs, truth_box, truth_label
+            # del rpn_proposals
+            # del loss, rcnn_cls_loss, rcnn_reg_loss, rpn_cls_loss, rpn_reg_loss, semi_cls_loss, semi_reg_loss
+            # del net.rpn_logits_flat, net.rpn_deltas_flat
+            # del teacher.rpn_logits_flat, teacher.rpn_deltas_flat
+            # del rcnn_stat, rpn_stat
 
             # if net.use_rcnn:
             #     del net.rcnn_logits, net.rcnn_deltas
@@ -395,10 +409,6 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                 del fgd_loss
             torch.cuda.empty_cache()
 
-            if (j+1)%100 == 0:
-                validate(net, val_thing[0], (epoch-1)*3 + j//100, val_thing[1])
-                net.set_mode('train')
-        validate(net, val_thing[0], epoch*3, val_thing[1])
     rpn_stats = np.asarray(rpn_stats, np.float32)
     
     print('Train Epoch %d, iter %d, total time %f, loss %f' % (epoch, j, time.time() - s, np.average(total_loss)))
