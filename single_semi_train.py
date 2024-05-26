@@ -98,7 +98,7 @@ def main():
     # Initilize network
     net = getattr(this_module, net)(config, hes=train_config['hard_example_solution'])
     print(f'CUDA:{torch.cuda.is_available()}')
-    net = net.cuda()
+    net = net.to(device)
     print(sum(p.numel() for p in net.parameters() if p.requires_grad))
     
     optimizer = getattr(torch.optim, optimizer)
@@ -107,7 +107,7 @@ def main():
     else:
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
     # lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 45, 90, 100], gamma=0.1)
-    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150, T_mult=1, eta_min=train_config['init_lr']/100)
+    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=train_config['init_lr']/100)
     
     # def warmup_fn(epoch, warmup_epochs=10):
     #     if epoch < warmup_epochs:
@@ -145,7 +145,7 @@ def main():
            
     teacher_net = SANet(config, mode='train')
     teacher_net.load_state_dict(torch.load(config['teacher'])['state_dict'])
-    teacher_net = teacher_net.cuda()
+    teacher_net = teacher_net.to(device)
     teacher_net.eval()
 
     if label_type == 'bbox':
@@ -183,7 +183,7 @@ def main():
     writer = SummaryWriter(tb_out_dir)
     train_writer = SummaryWriter(os.path.join(tb_out_dir, 'train'))
     val_writer = SummaryWriter(os.path.join(tb_out_dir, 'val'))
-    # writer.add_graph(net, (torch.zeros((16, 1, 128, 128, 128)).cuda(), [[]], [[]], [[]], [torch.zeros((16, 128, 128, 128))]), verbose=False)
+    # writer.add_graph(net, (torch.zeros((16, 1, 128, 128, 128)).to(device), [[]], [[]], [[]], [torch.zeros((16, 128, 128, 128))]), verbose=False)
     reload_path_count = 1
     for i in range(start_epoch, epochs + 1):
         # learning rate schedule
@@ -246,10 +246,7 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
     att_losses = []
     fg_losses = []
     bg_losses = []
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
+    
     labeled_data = iter(l_train_loader)
     with tqdm(total=len(ul_train_loader)) as pbar:
         optimizer.zero_grad()
@@ -281,14 +278,14 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                     # if len(cls_idx[0]):
                     #     t_cls_proposal = proposal_preprocess(t_rpn_proposals[cls_idx].cpu().numpy(), inputs.shape)
                     #     with torch.no_grad():
-                    #         t_cls_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_cls_proposal).cuda()))
+                    #         t_cls_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_cls_proposal).to(device)))
                     #         t_cls_rcnn_logits, _ = data_parallel(teacher.rcnn_head, t_cls_rcnn_crops)
 
                     # if len(reg_idx[0]):
                     #     t_reg_proposal_candidate = proposal_jittering(t_rpn_proposals[reg_idx].cpu().numpy(), gamma=0.3)
                     #     t_reg_proposal = proposal_preprocess(t_reg_proposal_candidate, inputs.shape)
                     #     with torch.no_grad():
-                    #         t_reg_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_reg_proposal).cuda()))
+                    #         t_reg_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_reg_proposal).to(device)))
                     #         _, t_reg_rcnn_deltas = data_parallel(teacher.rcnn_head, t_reg_rcnn_crops)
                     #     cord_box_deltas = center_box_to_coord_box(box_transform_inv(t_reg_proposal_candidate[:,2:],
                     #                     t_reg_rcnn_deltas.cpu().detach().numpy()[:,6:], config['box_reg_weight']))
@@ -298,7 +295,7 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                         t_proposal_candidate = proposal_jittering(t_rpn_proposals[rcnn_cand_idx].cpu().numpy(), gamma=0.2)
                         t_proposal = proposal_preprocess(t_proposal_candidate, inputs.shape)
                         with torch.no_grad():
-                            t_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_proposal).cuda()))
+                            t_rcnn_crops = data_parallel(teacher.rcnn_crop, (t_features, inputs, torch.from_numpy(t_proposal).to(device)))
                             t_cls_rcnn_logits, t_reg_rcnn_deltas = data_parallel(teacher.rcnn_head, t_rcnn_crops)
                         t_cls_rcnn_logits = t_cls_rcnn_logits.reshape(len(rcnn_cand_idx[0]),4,2)[:,0,...]
                         cord_box_deltas = center_box_to_coord_box(box_transform_inv(t_proposal_candidate[:,2:],
@@ -320,7 +317,7 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
                                                     inputs.shape)
                     if len(s_rpn_proposals):
                         s_proposals = proposal_preprocess(s_rpn_proposals.detach().cpu().numpy(), inputs.shape)
-                        s_rcnn_crops = data_parallel(net.rcnn_crop, (s_features, inputs, torch.from_numpy(s_proposals).cuda()))
+                        s_rcnn_crops = data_parallel(net.rcnn_crop, (s_features, inputs, torch.from_numpy(s_proposals).to(device)))
                         s_rcnn_logits, s_rcnn_deltas = data_parallel(net.rcnn_head, s_rcnn_crops)
                         semi_cls_loss, semi_reg_loss = semi_loss(t_cls_rcnn_logits, s_rcnn_logits[rcnn_cand_idx],
                                     t_reg_rcnn_deltas[reg_keeps], s_rcnn_deltas[rcnn_cand_idx][reg_keeps])
@@ -348,18 +345,23 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
 
                 # breakpoint()
                 rpn_proposals,_ = rpn_nms(config, 'train', inputs, net.rpn_window, rpn_logits_flat, rpn_deltas_flat)
-                rpn_proposals, rcnn_labels, rcnn_assigns, rcnn_targets = make_rcnn_target(config, 'train', inputs, 
-                        rpn_proposals, truth_box, truth_label)
-                proposal = rpn_proposals[:, [0, 2, 3, 4, 5, 6, 7]].cpu().numpy().copy() # pick proposal=[bs,z,y,x,d,h,w]
-                proposal[:, 1:] = center_box_to_coord_box(proposal[:, 1:])              # transform [bs,z,y,x,d,h,w] to [bs,z_start,..., z_end,...]
-                proposal = proposal.astype(np.int64)                                    # make it integer
-                proposal[:, 1:] = ext2factor(proposal[:, 1:], 4)                        # align to 4
-                proposal[:, 1:] = clip_boxes(proposal[:, 1:], inputs.shape[2:])         # clip to make boxes in range of image
-                features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in net.features]
-                rcnn_crops = data_parallel(net.rcnn_crop, (features, inputs, torch.from_numpy(proposal).cuda()))
-                
-                rcnn_logits, rcnn_deltas = data_parallel(net.rcnn_head, rcnn_crops)
-                rcnn_cls_loss, rcnn_reg_loss, rcnn_stat = rcnn_loss(rcnn_logits, rcnn_deltas, rcnn_labels, rcnn_targets)
+
+                rcnn_cls_loss = torch.zeros(1).to(device)
+                rcnn_reg_loss = torch.zeros(1).to(device)
+                rcnn_stat = None
+                if len(rpn_proposals)>0:
+                    rpn_proposals, rcnn_labels, rcnn_assigns, rcnn_targets = make_rcnn_target(config, 'train', inputs, 
+                            rpn_proposals, truth_box, truth_label)
+                    proposal = rpn_proposals[:, [0, 2, 3, 4, 5, 6, 7]].cpu().numpy().copy() # pick proposal=[bs,z,y,x,d,h,w]
+                    proposal[:, 1:] = center_box_to_coord_box(proposal[:, 1:])              # transform [bs,z,y,x,d,h,w] to [bs,z_start,..., z_end,...]
+                    proposal = proposal.astype(np.int64)                                    # make it integer
+                    proposal[:, 1:] = ext2factor(proposal[:, 1:], 4)                        # align to 4
+                    proposal[:, 1:] = clip_boxes(proposal[:, 1:], inputs.shape[2:])         # clip to make boxes in range of image
+                    features = [t.unsqueeze(0).expand(torch.cuda.device_count(), -1, -1, -1, -1, -1) for t in net.features]
+                    rcnn_crops = data_parallel(net.rcnn_crop, (features, inputs, torch.from_numpy(proposal).to(device)))
+                    
+                    rcnn_logits, rcnn_deltas = data_parallel(net.rcnn_head, rcnn_crops)
+                    rcnn_cls_loss, rcnn_reg_loss, rcnn_stat = rcnn_loss(rcnn_logits, rcnn_deltas, rcnn_labels, rcnn_targets)
             
                 loss = rpn_cls_loss + rpn_reg_loss + rcnn_cls_loss + rcnn_reg_loss + semi_cls_loss + semi_reg_loss
 
@@ -393,8 +395,8 @@ def train(net, teacher, ul_train_loader, l_train_loader, optimizer, epoch, write
 
             pbar.set_description(f'loss:{np.array(total_loss).mean():.4f}')
             pbar.update(1)
-
-            rcnn_stats.append(rcnn_stat)
+            if rcnn_stat is not None:
+                rcnn_stats.append(rcnn_stat)
 
             # del inputs, truth_box, truth_label
             # del rpn_proposals
@@ -477,7 +479,7 @@ def validate(net, val_loader, epoch, writer):
     with tqdm(total=len(val_loader)) as pbar:
         for j, (inputs, truth_box, truth_label) in enumerate(val_loader):
             with torch.no_grad():
-                inputs = inputs.cuda()
+                inputs = inputs.to(device)
                 truth_box = np.array(truth_box)
                 truth_label = np.array(truth_label)
 

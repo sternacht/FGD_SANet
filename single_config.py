@@ -148,7 +148,7 @@ net_config = {
     'rcnn_train_bg_thresh_high': 0.1,
     'rcnn_train_batch_size': 64,
     'rcnn_train_fg_fraction': 0.5,
-    'rcnn_train_nms_pre_score_threshold': 0.5,
+    'rcnn_train_nms_pre_score_threshold': 0.1,
     'rcnn_train_nms_overlap_threshold': 0.1,
     'rcnn_test_nms_pre_score_threshold': 0.0,
     'rcnn_test_nms_overlap_threshold': 0.1,
@@ -172,7 +172,7 @@ train_config = {
     'momentum': 0.9,
     'weight_decay': 1e-5,
 
-    'epochs': 150, #200 #400
+    'epochs': 100, #200 #400
     'epoch_save': 3,
     'epoch_rcnn': 0, #20 #47
     'num_workers': 8, #30
@@ -197,12 +197,12 @@ train_config['out_dir'] = os.path.join(train_config['RESULTS_DIR'], f"test")
 if net_config['FGD']:
     train_config['out_dir'] += '_FGD'
 # train_config['initial_checkpoint'] = None
-train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\SANet_results\ME_LDCT_semi\AdamW0.001_Bs8_fOHEM100_bb0\model\last.ckpt'
+train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\SANet_results\ME_LDCT_semi\test\model\last.ckpt'
 # train_config['initial_checkpoint'] = r'F:\master\code\LSSANet-main\SANet_semi_last_049.ckpt'
 
 # out_dir = r'F:\master\code\LSSANet-main\MsaNet_R_results\ME_LDCT\AdamW0.0003_Bs6x4_OHEM10_bb0'
-test_config['out_dir'] = rf'F:\master\code\LSSANet-main\SANet_results\ME_LDCT\AdamW0.001_Bs8_fOHEM100_bb0_pretrain'   # out_dir
-test_config['checkpoint'] = rf"{test_config['out_dir']}\model\135.ckpt"
+test_config['out_dir'] = rf'F:\master\code\LSSANet-main\SANet_results\ME_LDCT_semi\test'   # out_dir
+test_config['checkpoint'] = rf"{test_config['out_dir']}\model\096.ckpt"
 # test_config['checkpoint'] = rf'F:\master\code\LSSANet-main\SANet_semi_last_049.ckpt'
 
 # test_config['checkpoint'] = rf'F:\master\code\LSSANet-main\MsaNet_results\(teacher)AdamW0.001_Ercnn100_Bs12_OHEM_wd1e-5_fullrpn_noinit.ckpt'

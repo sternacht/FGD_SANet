@@ -6,6 +6,11 @@ from scipy.ndimage.interpolation import rotate
 
 
 def pad2factor(image, factor=32, pad_value=170):
+    '''
+    adding padding to image and make image align to factor
+    pad_value: constant padding value
+    return padded image
+    '''
     depth, height, width = image.shape[-3:]
     d = int(math.ceil(depth / float(factor))) * factor
     h = int(math.ceil(height / float(factor))) * factor
@@ -21,6 +26,10 @@ def pad2factor(image, factor=32, pad_value=170):
     return image
 
 def fillter_box(bboxes, size):
+    '''
+    filter out of range bboxes, coord<0 or coord>size
+    return bboxes in the range
+    '''
     res = []
     for box in bboxes:
         if box[0] - box[0+3] / 2 > 0 and box[0] + box[0+3] / 2 < size[0] and \

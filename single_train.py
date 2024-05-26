@@ -105,8 +105,8 @@ def main():
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay, momentum=momentum)
     else:
         optimizer = optimizer(net.parameters(), lr=init_lr, weight_decay=weight_decay)
-    lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[90], gamma=0.01)
-    # lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=100, T_mult=1, eta_min=train_config['init_lr']/100)
+    # lr_schduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[90], gamma=0.01)
+    lr_schduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=train_config['init_lr']/100)
     
     # def warmup_fn(epoch, warmup_epochs=10):
     #     if epoch < warmup_epochs:

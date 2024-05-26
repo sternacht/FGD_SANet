@@ -56,12 +56,16 @@ def semi_loss(t_logits, s_logits, t_deltas, s_deltas):
     '''
     # breakpoint()
     # cls loss
-    loss = nn.KLDivLoss(reduction='batchmean')
+    # loss = nn.KLDivLoss(reduction='batchmean')
+    # t_cls = F.softmax(t_logits, dim=1)
+    # s_cls = F.log_softmax(s_logits, dim=1)
+    # cls_loss = loss(s_cls[:,1], t_cls[:,1])
+    
+    loss_fn = nn.BCEWithLogitsLoss()
     t_cls = F.softmax(t_logits, dim=1)
-    s_cls = F.log_softmax(s_logits, dim=1)
-    cls_loss = loss(s_cls[:,1], t_cls[:,1])
-    # pos_num = (s_cls[:,1] > 0.5).sum()
-    # cls_loss = loss(s_cls[:,1], t_cls[:,1]) / torch.clamp(pos_num, 1.)
+    s_cls = s_logits[:, 1]
+    pseudo_labels = (t_cls[:, 1] > 0.7).float()
+    cls_loss = loss_fn(s_cls, pseudo_labels)
 
     # reg loss
     t_reg = t_deltas[:,6:]
